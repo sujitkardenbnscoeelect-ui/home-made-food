@@ -20,6 +20,17 @@ function todayKey() {
   return `${yyyy}-${mm}-${dd}`
 }
 
+function offsetDate(dateStr, days) {
+  const [yyyy, mm, dd] = dateStr.split('-').map(Number)
+  const d = new Date(yyyy, mm - 1, dd)
+  d.setDate(d.getDate() + days)
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
 function formatDisplayDate(dateStr) {
   const [yyyy, mm, dd] = dateStr.split('-').map(Number)
   const d = new Date(yyyy, mm - 1, dd)
@@ -85,6 +96,24 @@ function ReceiptIcon({ active }) {
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
       <polyline points="10 9 9 9 8 9" />
+    </svg>
+  )
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  )
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <polyline points="9 18 15 12 9 6" />
     </svg>
   )
 }
@@ -253,32 +282,48 @@ function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
 
 export default function OwnerDashboard() {
   const navigate = useNavigate()
-  const dateKey = todayKey()
-  const displayDate = formatDisplayDate(dateKey)
+  const today = todayKey()
+
+  const [selectedDate, setSelectedDate] = useState(today)
+  const displayDate = formatDisplayDate(selectedDate)
+  const isToday = selectedDate === today
 
   const [customers, setCustomers] = useState([])
-  const [attendance, setAttendance] = useState({}) // { customerId: { lunch, dinner, extraLunch, extraDinner } }
+  const [attendance, setAttendance] = useState({})
   const [savingSet, setSavingSet] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [modal, setModal] = useState(null) // { customer }
+  const [modal, setModal] = useState(null)
 
-  // ── fetch ──────────────────────────────────────────────────────────────────
-  const fetchData = useCallback(async (isRefresh = false) => {
+  // ── date navigation ────────────────────────────────────────────────────────
+  function goToPrevDay() {
+    setSelectedDate(d => offsetDate(d, -1))
+  }
+  function goToNextDay() {
+    setSelectedDate(d => {
+      const next = offsetDate(d, 1)
+      return next <= today ? next : d
+    })
+  }
+  function goToToday() {
+    setSelectedDate(today)
+  }
+
+  // ── fetch customers (once) ─────────────────────────────────────────────────
+  const fetchCustomers = useCallback(async () => {
+    const cSnap = await getDocs(
+      query(collection(db, 'customers'), where('active', '==', true))
+    )
+    setCustomers(cSnap.docs.map(d => ({ id: d.id, ...d.data() })))
+  }, [])
+
+  // ── fetch attendance for selected date ────────────────────────────────────
+  const fetchAttendance = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
-
     try {
-      // customers
-      const cSnap = await getDocs(
-        query(collection(db, 'customers'), where('active', '==', true))
-      )
-      const cList = cSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      setCustomers(cList)
-
-      // today's attendance
       const aSnap = await getDocs(
-        query(collection(db, 'attendance'), where('date', '==', dateKey))
+        query(collection(db, 'attendance'), where('date', '==', selectedDate))
       )
       const aMap = {}
       aSnap.docs.forEach(d => {
@@ -290,32 +335,32 @@ export default function OwnerDashboard() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [dateKey])
+  }, [selectedDate])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  // customers load once; attendance reloads whenever date changes
+  useEffect(() => { fetchCustomers() }, [fetchCustomers])
+  useEffect(() => { fetchAttendance() }, [fetchAttendance])
 
   // ── toggle lunch / dinner ──────────────────────────────────────────────────
   async function handleToggle(customer, type) {
     const cid = customer.id
     const current = attendance[cid] ?? { ...EMPTY_RECORD }
     const updated = { ...current, [type]: !current[type] }
-    const docId = `${cid}_${dateKey}`
+    const docId = `${cid}_${selectedDate}`
 
-    // optimistic update
     setAttendance(prev => ({ ...prev, [cid]: updated }))
     setSavingSet(prev => new Set(prev).add(cid))
 
     try {
       await setDoc(doc(db, 'attendance', docId), {
         customerId: cid,
-        date: dateKey,
+        date: selectedDate,
         lunch: updated.lunch,
         dinner: updated.dinner,
         extraLunch: updated.extraLunch ?? 0,
         extraDinner: updated.extraDinner ?? 0,
       })
     } catch {
-      // roll back on error
       setAttendance(prev => ({ ...prev, [cid]: current }))
     } finally {
       setSavingSet(prev => { const s = new Set(prev); s.delete(cid); return s })
@@ -327,7 +372,7 @@ export default function OwnerDashboard() {
     const cid = customer.id
     const current = attendance[cid] ?? { ...EMPTY_RECORD }
     const updated = { ...current, extraLunch, extraDinner }
-    const docId = `${cid}_${dateKey}`
+    const docId = `${cid}_${selectedDate}`
 
     setAttendance(prev => ({ ...prev, [cid]: updated }))
     setModal(null)
@@ -336,7 +381,7 @@ export default function OwnerDashboard() {
     try {
       await setDoc(doc(db, 'attendance', docId), {
         customerId: cid,
-        date: dateKey,
+        date: selectedDate,
         lunch: updated.lunch,
         dinner: updated.dinner,
         extraLunch,
@@ -361,27 +406,55 @@ export default function OwnerDashboard() {
     <div className="min-h-screen bg-gray-50 flex flex-col max-w-md mx-auto" style={{ fontFamily: "'DM Sans', sans-serif" }}>
 
       {/* ── Header ── */}
-      <header className="bg-black px-4 pt-12 pb-5 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          {/* Logo + title */}
+      <header className="bg-black px-4 pt-12 pb-4 flex-shrink-0">
+        {/* Row 1: logo + title + refresh */}
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center flex-shrink-0">
               <span className="text-black text-xs font-bold tracking-widest">HMF</span>
             </div>
-            <div>
-              <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
-              <p className="text-gray-400 text-xs mt-0.5">{displayDate}</p>
-            </div>
+            <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
           </div>
-
-          {/* Refresh */}
           <button
-            onClick={() => fetchData(true)}
+            onClick={() => fetchAttendance(true)}
             className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
             aria-label="Refresh"
           >
             <RefreshIcon spinning={refreshing} />
           </button>
+        </div>
+
+        {/* Row 2: date navigator */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goToPrevDay}
+            className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 active:bg-white/30 flex items-center justify-center text-white transition flex-shrink-0"
+            aria-label="Previous day"
+          >
+            <ChevronLeftIcon />
+          </button>
+
+          <div className="flex-1 text-center">
+            <p className="text-white text-sm font-semibold leading-tight">{displayDate}</p>
+          </div>
+
+          <button
+            onClick={goToNextDay}
+            disabled={isToday}
+            className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 active:bg-white/30 flex items-center justify-center text-white transition flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Next day"
+          >
+            <ChevronRightIcon />
+          </button>
+
+          {!isToday && (
+            <button
+              onClick={goToToday}
+              className="flex-shrink-0 bg-white text-black text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-gray-100 active:bg-gray-200 transition"
+            >
+              Today
+            </button>
+          )}
         </div>
       </header>
 
