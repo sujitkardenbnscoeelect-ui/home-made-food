@@ -186,7 +186,10 @@ export default function CustomerAttendance() {
   const today = todayKey()
 
   const fetchData = useCallback(async () => {
-    if (!customerId) return
+    if (!customerId) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       // customer name (only needed once, but safe to re-fetch)
@@ -265,6 +268,12 @@ export default function CustomerAttendance() {
           <div className="flex flex-col items-center justify-center h-48 gap-3">
             <div className="w-7 h-7 border-[3px] border-black border-t-transparent rounded-full animate-spin" />
             <p className="text-sm text-gray-400">Loading attendance…</p>
+          </div>
+        ) : !customerId ? (
+          <div className="flex flex-col items-center justify-center h-48 gap-2 text-center px-6">
+            <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-1 text-2xl">⚠️</div>
+            <p className="text-sm font-semibold text-gray-700">Account not linked</p>
+            <p className="text-xs text-gray-400">Your account has no customer profile attached. Please contact the owner.</p>
           </div>
         ) : (
           <>

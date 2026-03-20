@@ -13,13 +13,22 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // Reset to loading on every auth state change so ProtectedRoute
+      // never acts on stale role/user data during the Firestore fetch.
+      setLoading(true)
+
       if (user) {
-        const docSnap = await getDoc(doc(db, 'users', user.uid))
-        if (docSnap.exists()) {
-          const data = docSnap.data()
-          setRole(data.role)
-          setUserData(data)
-        } else {
+        try {
+          const docSnap = await getDoc(doc(db, 'users', user.uid))
+          if (docSnap.exists()) {
+            const data = docSnap.data()
+            setRole(data.role)
+            setUserData(data)
+          } else {
+            setRole(null)
+            setUserData(null)
+          }
+        } catch {
           setRole(null)
           setUserData(null)
         }
@@ -29,6 +38,7 @@ export function AuthProvider({ children }) {
         setRole(null)
         setUserData(null)
       }
+
       setLoading(false)
     })
 

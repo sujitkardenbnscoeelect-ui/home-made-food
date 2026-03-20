@@ -19,8 +19,20 @@ export default function Login() {
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password)
       const userSnap = await getDoc(doc(db, 'users', credential.user.uid))
-      const role = userSnap.data()?.role
-      navigate(role === 'owner' ? '/owner/dashboard' : '/customer/attendance', { replace: true })
+
+      if (!userSnap.exists()) {
+        setError('User account not found. Contact the owner.')
+        return
+      }
+
+      const role = userSnap.data().role
+      if (role === 'owner') {
+        navigate('/owner/dashboard', { replace: true })
+      } else if (role === 'customer') {
+        navigate('/customer/attendance', { replace: true })
+      } else {
+        setError('Unknown account role. Contact the owner.')
+      }
     } catch (err) {
       setError('Invalid email or password. Please try again.')
     } finally {
