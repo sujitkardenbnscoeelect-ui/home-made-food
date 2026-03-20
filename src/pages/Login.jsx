@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signInWithEmailAndPassword } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 
 export default function Login() {
@@ -18,14 +18,15 @@ export default function Login() {
 
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password)
-      const userSnap = await getDoc(doc(db, 'users', credential.user.uid))
+      const q = query(collection(db, 'users'), where('uid', '==', credential.user.uid))
+      const snap = await getDocs(q)
 
-      if (!userSnap.exists()) {
+      if (snap.empty) {
         setError('User account not found. Contact the owner.')
         return
       }
 
-      const role = userSnap.data().role
+      const role = snap.docs[0].data().role
       if (role === 'owner') {
         navigate('/owner/dashboard', { replace: true })
       } else if (role === 'customer') {

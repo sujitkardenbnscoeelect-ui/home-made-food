@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 
 const AuthContext = createContext(null)
@@ -19,9 +19,10 @@ export function AuthProvider({ children }) {
 
       if (user) {
         try {
-          const docSnap = await getDoc(doc(db, 'users', user.uid))
-          if (docSnap.exists()) {
-            const data = docSnap.data()
+          const q = query(collection(db, 'users'), where('uid', '==', user.uid))
+          const snap = await getDocs(q)
+          if (!snap.empty) {
+            const data = snap.docs[0].data()
             setRole(data.role)
             setUserData(data)
           } else {
