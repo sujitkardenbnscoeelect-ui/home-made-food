@@ -45,124 +45,229 @@ export function generateBillPDF(customer, billData, year, month) {
   const monthName = MONTH_NAMES[month - 1]
   const monthShort = MONTH_SHORT[month - 1]
   const invoiceNum = `HMF-${monthShort}-${year}-${String(customer.invoiceIndex ?? 1).padStart(3, '0')}`
+  const totalDays = new Date(year, month, 0).getDate()
 
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
-  const W = pdf.internal.pageSize.getWidth()
-  const margin = 40
+  // Build attendance lookup from rows (only active days are stored)
+  const aMap = {}
+  for (const row of attendanceRows) { aMap[row.date] = row }
 
-  // header bar
-  pdf.setFillColor(0, 0, 0)
-  pdf.rect(0, 0, W, 70, 'F')
-  pdf.setTextColor(255, 255, 255)
-  pdf.setFontSize(22)
-  pdf.setFont('helvetica', 'bold')
-  pdf.text('HMF', margin, 30)
-  pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text('Home Made Food', margin, 46)
-  pdf.text(`Invoice: ${invoiceNum}`, W - margin, 30, { align: 'right' })
-  pdf.text(`${monthName} ${year}`, W - margin, 46, { align: 'right' })
+  // All calendar days for this month
+  const allDays = []
+  for (let d = 1; d <= totalDays; d++) {
+    allDays.push(
+      `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    )
+  }
 
-  // customer info
-  pdf.setTextColor(0, 0, 0)
-  let y = 100
-  pdf.setFontSize(14)
-  pdf.setFont('helvetica', 'bold')
-  pdf.text('Bill To', margin, y)
-  y += 18
-  pdf.setFontSize(11)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text(customer.name ?? '', margin, y); y += 15
-  if (customer.phone) { pdf.text(`Phone: ${customer.phone}`, margin, y); y += 15 }
-  if (customer.email) { pdf.text(`Email: ${customer.email}`, margin, y); y += 15 }
+  // ── Page constants (mm, A4 = 210 x 297) ────────────────────────────────────
+  const PW  = 210   // page width
+  const PH  = 297   // page height
+  const ML  = 14    // left margin
+  const MR  = 14    // right margin  (right edge = PW - MR = 196)
+  const MB  = 16    // bottom margin
+  const RX  = PW - MR          // right edge for right-aligned text
+  const TW  = PW - ML - MR     // table width = 182mm
 
-  // rate info
-  y += 6
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(10)
-  pdf.setTextColor(100, 100, 100)
-  pdf.text(`Lunch Rate: ₹${customer.lunchRate}  ·  Dinner Rate: ₹${customer.dinnerRate}`, margin, y)
-  y += 20
+  // Fixed column X positions (left edge of each column's text area)
+  // Date: 38mm | Meals: 60mm | Extra: 30mm | Amount: right-aligned
+  const CX = {
+    date:   ML + 2,          // 16mm
+    meals:  ML + 40,         // 54mm
+    extra:  ML + 100,        // 114mm
+    amount: RX - 2,          // 194mm (right-aligned)
+  }
 
-  // divider
-  pdf.setDrawColor(220, 220, 220)
-  pdf.line(margin, y, W - margin, y)
-  y += 14
+  const ROW_H = 7    // row height mm
+  const HDR_H = 9    // table header height mm
+  // Reserve enough mm at bottom for totals before forcing a new page
+  const TOTALS_RESERVE = 46
 
-  // table header
-  pdf.setFillColor(240, 240, 240)
-  pdf.rect(margin, y - 10, W - margin * 2, 20, 'F')
-  pdf.setTextColor(0, 0, 0)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(9)
-  const col = { date: margin + 4, meals: margin + 110, extra: margin + 210, amount: W - margin - 4 }
-  pdf.text('Date', col.date, y + 4)
-  pdf.text('Meals', col.meals, y + 4)
-  pdf.text('Extra', col.extra, y + 4)
-  pdf.text('Amount', col.amount, y + 4, { align: 'right' })
-  y += 20
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
 
-  // rows
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(9)
-  let rowBg = false
-  for (const row of attendanceRows) {
-    if (y > 750) { pdf.addPage(); y = 40 }
-    if (rowBg) {
-      pdf.setFillColor(250, 250, 250)
-      pdf.rect(margin, y - 8, W - margin * 2, 16, 'F')
+  // ── Shorthand helpers ────────────────────────────────────────────────────────
+  const fill  = (r, g, b) => pdf.setFillColor(r, g, b)
+  const color = (r, g, b) => pdf.setTextColor(r, g, b)
+  const draw  = (r, g, b) => pdf.setDrawColor(r, g, b)
+  const font  = (style, size) => { pdf.setFont('helvetica', style); pdf.setFontSize(size) }
+
+  // ── Draw table header row (reused on continuation pages) ────────────────────
+  function drawTableHeader(yPos) {
+    fill(25, 25, 25)
+    pdf.rect(ML, yPos, TW, HDR_H, 'F')
+    color(255, 255, 255)
+    font('bold', 8)
+    const ty = yPos + 6
+    pdf.text('Date',   CX.date,   ty)
+    pdf.text('Meals',  CX.meals,  ty)
+    pdf.text('Extra',  CX.extra,  ty)
+    pdf.text('Amount', CX.amount, ty, { align: 'right' })
+    return yPos + HDR_H
+  }
+
+  let y = 0
+
+  // ── Header bar ──────────────────────────────────────────────────────────────
+  fill(0, 0, 0)
+  pdf.rect(0, 0, PW, 18, 'F')
+  color(255, 255, 255)
+  font('bold', 13)
+  pdf.text('HMF', ML, 8)
+  font('normal', 7.5)
+  pdf.text('Home Made Food', ML, 14)
+  font('bold', 7.5)
+  pdf.text(`Invoice: ${invoiceNum}`, RX, 8, { align: 'right' })
+  font('normal', 7.5)
+  pdf.text(`${monthName} ${year}`, RX, 14, { align: 'right' })
+
+  // ── Customer info (two-column layout) ────────────────────────────────────────
+  y = 23
+  color(0, 0, 0)
+  font('bold', 9.5)
+  pdf.text('Bill To', ML, y)
+  y += 5
+  font('normal', 8.5)
+  pdf.text(customer.name ?? '-', ML, y); y += 5
+  if (customer.phone) { pdf.text(`Phone: ${customer.phone}`, ML, y); y += 5 }
+  if (customer.email) { pdf.text(`Email: ${customer.email}`, ML, y); y += 5 }
+
+  // Rates block (right side, aligned with customer block)
+  color(60, 60, 60)
+  font('bold', 8)
+  pdf.text('Rates', RX, 28, { align: 'right' })
+  font('normal', 8)
+  pdf.text(`Lunch:  Rs.${customer.lunchRate ?? 0} / day`,   RX, 34, { align: 'right' })
+  pdf.text(`Dinner: Rs.${customer.dinnerRate ?? 0} / day`,  RX, 40, { align: 'right' })
+
+  // ── Divider ─────────────────────────────────────────────────────────────────
+  y = Math.max(y, 44) + 3
+  draw(210, 210, 210)
+  pdf.line(ML, y, RX, y)
+  y += 4
+
+  // ── Table header ─────────────────────────────────────────────────────────────
+  y = drawTableHeader(y)
+
+  // ── Table rows (all days of month) ──────────────────────────────────────────
+  let rowIdx = 0
+  for (const dateStr of allDays) {
+    // Page break: leave room for totals
+    if (y + ROW_H > PH - MB - TOTALS_RESERVE) {
+      pdf.addPage()
+      y = 12
+      y = drawTableHeader(y)
+      rowIdx = 0  // reset alternating bg on new page
     }
-    rowBg = !rowBg
-    const mealsStr = [row.lunch ? 'Lunch' : '', row.dinner ? 'Dinner' : ''].filter(Boolean).join(' + ') || '—'
-    const extraStr = (row.extraAmount ?? 0) > 0 ? `₹${row.extraAmount}` : '—'
-    const rowAmt = (row.lunch ? customer.lunchRate : 0)
-      + (row.dinner ? customer.dinnerRate : 0)
-      + (row.extraAmount ?? 0)
-    pdf.setTextColor(80, 80, 80)
-    pdf.text(row.date, col.date, y + 2)
-    pdf.setTextColor(0, 0, 0)
-    pdf.text(mealsStr, col.meals, y + 2)
-    pdf.text(extraStr, col.extra, y + 2)
-    pdf.text(`₹${rowAmt}`, col.amount, y + 2, { align: 'right' })
-    y += 16
+
+    const rec = aMap[dateStr]
+    const isAbsent = !rec || (!rec.lunch && !rec.dinner && !rec.extraAmount)
+
+    // Alternating row background
+    if (rowIdx % 2 === 1) {
+      fill(249, 249, 249)
+      pdf.rect(ML, y, TW, ROW_H, 'F')
+    }
+    rowIdx++
+
+    // Format date: "21 Mar (Sat)"
+    const [, mm, dd] = dateStr.split('-').map(Number)
+    const dow = new Date(year, mm - 1, dd).toLocaleDateString('en-GB', { weekday: 'short' })
+    const dateLabel = `${String(dd).padStart(2, ' ')} ${MONTH_SHORT[mm - 1].charAt(0)}${MONTH_SHORT[mm - 1].slice(1).toLowerCase()} (${dow})`
+
+    const rowAmt = isAbsent ? 0
+      : (rec.lunch  ? (customer.lunchRate  ?? 0) : 0)
+      + (rec.dinner ? (customer.dinnerRate ?? 0) : 0)
+      + (rec.extraAmount ?? 0)
+
+    const mealsStr = isAbsent
+      ? 'Absent'
+      : [rec.lunch ? 'Lunch' : '', rec.dinner ? 'Dinner' : ''].filter(Boolean).join(' + ') || 'Extra only'
+
+    const extraStr = !isAbsent && (rec?.extraAmount ?? 0) > 0
+      ? `Rs.${rec.extraAmount}`
+      : '-'
+
+    const ty = y + ROW_H - 2  // text baseline inside row
+
+    font('normal', 8.5)
+
+    // Date
+    color(isAbsent ? 170 : 70, isAbsent ? 170 : 70, isAbsent ? 170 : 70)
+    pdf.text(dateLabel, CX.date, ty)
+
+    // Meals
+    color(isAbsent ? 190 : 0, isAbsent ? 190 : 0, isAbsent ? 190 : 0)
+    pdf.text(mealsStr, CX.meals, ty)
+
+    // Extra
+    color(100, 100, 100)
+    pdf.text(extraStr, CX.extra, ty)
+
+    // Amount
+    if (isAbsent) {
+      color(190, 190, 190)
+      pdf.text('-', CX.amount, ty, { align: 'right' })
+    } else {
+      color(0, 0, 0)
+      font('bold', 8.5)
+      pdf.text(`Rs.${rowAmt}`, CX.amount, ty, { align: 'right' })
+    }
+
+    // Row separator
+    draw(235, 235, 235)
+    pdf.line(ML, y + ROW_H, RX, y + ROW_H)
+
+    y += ROW_H
   }
 
-  // totals
-  y += 10
-  pdf.setDrawColor(220, 220, 220)
-  pdf.line(margin, y, W - margin, y)
-  y += 16
-  const totalsX = W - margin - 160
-
-  function totalRow(label, value, bold = false) {
-    pdf.setFont('helvetica', bold ? 'bold' : 'normal')
-    pdf.setFontSize(bold ? 11 : 10)
-    pdf.setTextColor(bold ? 0 : 80, bold ? 0 : 80, bold ? 0 : 80)
-    pdf.text(label, totalsX, y)
-    pdf.text(`₹${value}`, W - margin, y, { align: 'right' })
-    y += 18
+  // ── Totals section ────────────────────────────────────────────────────────────
+  if (y + TOTALS_RESERVE > PH - MB) {
+    pdf.addPage()
+    y = 14
   }
 
-  totalRow(`Lunch (${lunchDays} days × ₹${customer.lunchRate})`, lunchDays * customer.lunchRate)
-  totalRow(`Dinner (${dinnerDays} days × ₹${customer.dinnerRate})`, dinnerDays * customer.dinnerRate)
+  y += 5
+  draw(180, 180, 180)
+  pdf.line(ML, y, RX, y)
+  y += 6
+
+  // Totals label column starts at 110mm from left
+  const TX = ML + 96
+
+  function totalRow(label, value) {
+    color(80, 80, 80)
+    font('normal', 8.5)
+    pdf.text(label, TX, y)
+    pdf.text(`Rs.${value}`, RX, y, { align: 'right' })
+    y += 6
+  }
+
+  totalRow(
+    `Lunch   ${lunchDays}d x Rs.${customer.lunchRate ?? 0}`,
+    lunchDays * (customer.lunchRate ?? 0)
+  )
+  totalRow(
+    `Dinner  ${dinnerDays}d x Rs.${customer.dinnerRate ?? 0}`,
+    dinnerDays * (customer.dinnerRate ?? 0)
+  )
   if (extraAmount > 0) totalRow('Extra Charges', extraAmount)
 
-  y += 4
-  pdf.setFillColor(0, 0, 0)
-  pdf.rect(totalsX - 8, y - 14, W - margin - totalsX + 8 + margin, 26, 'F')
-  pdf.setTextColor(255, 255, 255)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(12)
-  pdf.text('Grand Total', totalsX, y + 4)
-  pdf.text(`₹${total}`, W - margin, y + 4, { align: 'right' })
-  y += 36
+  y += 3
 
-  // footer
-  pdf.setTextColor(150, 150, 150)
-  pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text('Thank you! — Home Made Food', W / 2, y, { align: 'center' })
+  // Grand total bar
+  const barLeft = TX - 4
+  const barWidth = RX - barLeft + MR
+  fill(0, 0, 0)
+  pdf.rect(barLeft, y - 3, barWidth, 11, 'F')
+  color(255, 255, 255)
+  font('bold', 11)
+  pdf.text('Grand Total', TX, y + 5.5)
+  pdf.text(`Rs.${total}`, RX, y + 5.5, { align: 'right' })
 
-  const fileName = `HMF-${customer.name?.replace(/\s+/g, '-')}-${monthShort}-${year}.pdf`
-  pdf.save(fileName)
+  // ── Footer (pinned to page bottom) ───────────────────────────────────────────
+  color(160, 160, 160)
+  font('normal', 7.5)
+  pdf.text('Thank you! - Home Made Food', PW / 2, PH - 6, { align: 'center' })
+
+  const safeName = (customer.name ?? 'bill').replace(/\s+/g, '-')
+  pdf.save(`HMF-${safeName}-${monthShort}-${year}.pdf`)
 }
