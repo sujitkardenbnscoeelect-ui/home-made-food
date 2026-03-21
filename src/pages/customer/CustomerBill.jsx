@@ -6,7 +6,6 @@ import { useAuth } from '../../context/AuthContext'
 import {
   MONTH_NAMES,
   MONTH_SHORT,
-  getMonthBounds,
   calcBill,
   generateBillPDF,
 } from '../../lib/generateBill'
@@ -164,40 +163,54 @@ export default function CustomerBill() {
     }
     setLoading(true)
     try {
-      // customer profile
+      // Customer profile
       const cSnap = await getDoc(doc(db, 'customers', customerId))
       const cData = { id: cSnap.id, invoiceIndex: 1, ...cSnap.data() }
       setCustomer(cData)
 
-      // attendance for this month
-      const { start, end } = getMonthBounds(year, month)
+      // Fetch ALL attendance for this customer with a single where clause.
+      // A compound query (customerId == X AND date >= Y AND date <= Z) requires
+      // a Firestore composite index — avoid it by filtering in JS instead.
+      const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
       const aSnap = await getDocs(
-        query(collection(db, 'attendance'),
-          where('customerId', '==', customerId),
-          where('date', '>=', start),
-          where('date', '<=', end)
-        )
+        query(collection(db, 'attendance'), where('customerId', '==', customerId))
       )
-      const aMap = {}
-      aSnap.docs.forEach(d => { aMap[d.data().date] = d.data() })
-      setAttendanceMap(aMap)
-      setBillData(calcBill(cData, aSnap.docs.map(d => d.data())))
 
-      // paid status
-      const billSnap = await getDoc(doc(db, 'bills', `${customerId}_${year}-${String(month).padStart(2, '0')}`))
+      console.log('customerId:', customerId)
+      console.log('attendance records found:', aSnap.size)
+
+      const rows = []
+      const aMap = {}
+      aSnap.docs.forEach(d => {
+        const data = d.data()
+        if (data.date && data.date.startsWith(monthPrefix)) {
+          rows.push(data)
+          aMap[data.date] = data
+        }
+      })
+
+      setAttendanceMap(aMap)
+      setBillData(calcBill(cData, rows))
+
+      console.log('rows this month:', rows.length)
+      console.log('total calculated:', calcBill(cData, rows).total)
+
+      // Paid status
+      const billSnap = await getDoc(doc(db, 'bills', `${customerId}_${monthPrefix}`))
       setPaid(billSnap.exists() && billSnap.data().paid)
 
-      // generate full date list up to today (or end of month if month is past)
+      // All dates up to today (most recent first) for the day-wise list
       const todayDate = new Date()
-      const todayYear = todayDate.getFullYear()
-      const todayMonth = todayDate.getMonth() + 1
-      const todayDay = todayDate.getDate()
-      const capDay = (year === todayYear && month === todayMonth) ? todayDay : lastDay
+      const capDay = (year === todayDate.getFullYear() && month === todayDate.getMonth() + 1)
+        ? todayDate.getDate()
+        : lastDay
       const dates = []
       for (let d = 1; d <= capDay; d++) {
-        dates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+        dates.push(`${monthPrefix}-${String(d).padStart(2, '0')}`)
       }
-      setAllDates(dates.reverse()) // most recent first
+      setAllDates(dates.reverse())
+    } catch (err) {
+      console.error('Failed to fetch bill data:', err)
     } finally {
       setLoading(false)
     }
