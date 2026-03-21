@@ -422,35 +422,36 @@ function SelfAttendanceSection({ todayRecord, onSaveMeal }) {
 
   const ownerMarked = todayRecord != null && todayRecord.selfMarked !== true
 
+  // Hide entirely if owner already marked, or all time windows are closed
+  if (ownerMarked || (!lunchOpen && !dinnerOpen)) return null
+
   return (
     <div className="space-y-2">
       <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1">Mark Today's Attendance</p>
 
-      {ownerMarked && (
-        <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
-          <p className="text-sm font-semibold text-amber-700">Owner has marked your attendance today</p>
-        </div>
+      {lunchOpen && (
+        <MealBlock
+          key={`lunch-${todayRecord ? 'loaded' : 'empty'}`}
+          meal="lunch"
+          isOpen={lunchOpen}
+          closedAt="6:00 AM"
+          todayRecord={todayRecord}
+          ownerMarked={false}
+          onSave={(att, pref) => onSaveMeal('lunch', att, pref)}
+        />
       )}
 
-      <MealBlock
-        key={`lunch-${todayRecord ? 'loaded' : 'empty'}`}
-        meal="lunch"
-        isOpen={lunchOpen}
-        closedAt="6:00 AM"
-        todayRecord={todayRecord}
-        ownerMarked={ownerMarked}
-        onSave={(att, pref) => onSaveMeal('lunch', att, pref)}
-      />
-
-      <MealBlock
-        key={`dinner-${todayRecord ? 'loaded' : 'empty'}`}
-        meal="dinner"
-        isOpen={dinnerOpen}
-        closedAt="7:00 PM"
-        todayRecord={todayRecord}
-        ownerMarked={ownerMarked}
-        onSave={(att, pref) => onSaveMeal('dinner', att, pref)}
-      />
+      {dinnerOpen && (
+        <MealBlock
+          key={`dinner-${todayRecord ? 'loaded' : 'empty'}`}
+          meal="dinner"
+          isOpen={dinnerOpen}
+          closedAt="7:00 PM"
+          todayRecord={todayRecord}
+          ownerMarked={false}
+          onSave={(att, pref) => onSaveMeal('dinner', att, pref)}
+        />
+      )}
     </div>
   )
 }
