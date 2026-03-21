@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'
-import { db } from '../../lib/firebase'
+import { signOut } from 'firebase/auth'
+import { db, auth } from '../../lib/firebase'
 import { useAuth } from '../../context/AuthContext'
 import { MONTH_NAMES, getMonthBounds } from '../../lib/generateBill'
 
@@ -47,6 +48,17 @@ function ReceiptIcon() {
       <polyline points="14 2 14 8 20 8" />
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
+    </svg>
+  )
+}
+
+function LogoutIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
     </svg>
   )
 }
@@ -231,6 +243,13 @@ export default function CustomerAttendance() {
   const today = todayKey()
   const [selectedDate, setSelectedDate] = useState(today)
 
+  async function handleLogout() {
+    if (window.confirm('Are you sure you want to logout?')) {
+      await signOut(auth)
+      navigate('/login')
+    }
+  }
+
   const fetchData = useCallback(async () => {
     if (!customerId) {
       setLoading(false)
@@ -306,14 +325,23 @@ export default function CustomerAttendance() {
 
       {/* ── Header ── */}
       <header className="bg-black px-4 pt-12 pb-5 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center flex-shrink-0">
-            <span className="text-black text-xs font-bold tracking-widest">HMF</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center flex-shrink-0">
+              <span className="text-black text-xs font-bold tracking-widest">HMF</span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
+              <p className="text-gray-400 text-xs mt-0.5">{customer?.name || '—'}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
-            <p className="text-gray-400 text-xs mt-0.5">{customer?.name || '—'}</p>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition flex-shrink-0"
+            aria-label="Logout"
+          >
+            <LogoutIcon />
+          </button>
         </div>
       </header>
 

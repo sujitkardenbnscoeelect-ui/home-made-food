@@ -8,7 +8,8 @@ import {
   setDoc,
   doc,
 } from 'firebase/firestore'
-import { db } from '../../lib/firebase'
+import { signOut } from 'firebase/auth'
+import { db, auth } from '../../lib/firebase'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,17 @@ function ReceiptIcon({ active }) {
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
       <polyline points="10 9 9 9 8 9" />
+    </svg>
+  )
+}
+
+function LogoutIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
     </svg>
   )
 }
@@ -261,6 +273,14 @@ export default function OwnerDashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [modal, setModal] = useState(null)
 
+  // ── logout ─────────────────────────────────────────────────────────────────
+  async function handleLogout() {
+    if (window.confirm('Are you sure you want to logout?')) {
+      await signOut(auth)
+      navigate('/login')
+    }
+  }
+
   // ── date navigation ────────────────────────────────────────────────────────
   function goToPrevDay() {
     setSelectedDate(d => offsetDate(d, -1))
@@ -379,13 +399,22 @@ export default function OwnerDashboard() {
             </div>
             <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
           </div>
-          <button
-            onClick={() => fetchAttendance(true)}
-            className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
-            aria-label="Refresh"
-          >
-            <RefreshIcon spinning={refreshing} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchAttendance(true)}
+              className="text-white p-2 rounded-xl active:bg-white/10 transition"
+              aria-label="Refresh"
+            >
+              <RefreshIcon spinning={refreshing} />
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
+              aria-label="Logout"
+            >
+              <LogoutIcon />
+            </button>
+          </div>
         </div>
 
         {/* Row 2: date navigator */}
