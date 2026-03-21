@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'
 import { signOut } from 'firebase/auth'
 import { db, auth } from '../../lib/firebase'
 import { useAuth } from '../../context/AuthContext'
@@ -63,15 +63,6 @@ function LogoutIcon() {
   )
 }
 
-function SettingsIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  )
-}
 
 function ChevronLeftIcon() {
   return (
@@ -131,24 +122,27 @@ function CalendarGrid({ year, month, attendanceMap, today, selectedDate, onSelec
           const isSelected = key === selectedDate
           const isTappable = state !== 'future'
 
-          // Base circle styles per state
+          // Circle styles per state
           let circleClass = 'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all'
-          if (state === 'present')       circleClass += ' bg-black text-white'
-          else if (state === 'today')    circleClass += ' bg-white border-2 border-black text-black'
-          else if (state === 'absent')   circleClass += ' bg-gray-100 text-gray-400'
-          else                           circleClass += ' text-gray-200'
-
-          // Selected ring wraps the circle
-          const wrapClass = isSelected
-            ? 'ring-2 ring-black ring-offset-1 rounded-full'
-            : ''
+          if (isSelected) {
+            circleClass += ' bg-white text-black border-2 border-black border-dashed'
+          } else if (state === 'present') {
+            circleClass += ' bg-[#1a1a1a] text-white'
+          } else if (state === 'today') {
+            circleClass += ' bg-white border-2 border-black text-black'
+          } else if (state === 'absent') {
+            circleClass += ' bg-[#FF3B30] text-white'
+          } else {
+            // future
+            circleClass = 'w-8 h-8 flex items-center justify-center text-xs font-semibold text-gray-300'
+          }
 
           return (
             <div key={idx} className="flex items-center justify-center h-9">
               <button
                 disabled={!isTappable}
                 onClick={() => isTappable && onSelectDate(key)}
-                className={`${wrapClass} focus:outline-none active:scale-90 transition-transform ${isTappable ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`focus:outline-none active:scale-90 transition-transform ${isTappable ? 'cursor-pointer' : 'cursor-default'}`}
               >
                 <div className={circleClass}>{day}</div>
               </button>
@@ -302,141 +296,135 @@ function SelectedDayCard({ dateStr, record, customer }) {
   )
 }
 
-// ─── Preference modal ─────────────────────────────────────────────────────────
-
-const PREF_OPTIONS = [
-  { value: 'veg',     label: 'Veg',     dot: 'bg-green-400' },
-  { value: 'nonveg',  label: 'Non-Veg', dot: 'bg-red-400'   },
-  { value: 'fasting', label: 'Fasting', dot: 'bg-yellow-400' },
+const DAILY_PREFS = [
+  { value: 'veg',     emoji: '🌿', label: 'Veg'     },
+  { value: 'nonveg',  emoji: '🍖', label: 'Non-Veg' },
+  { value: 'fasting', emoji: '🙏', label: 'Fasting'  },
 ]
 
-function PreferenceModal({ current, onSave, onClose }) {
-  const [selected, setSelected] = useState(current ?? '')
-  const [saving, setSaving] = useState(false)
+// ─── Self attendance section ───────────────────────────────────────────────────
 
-  async function handleSave() {
-    setSaving(true)
-    try { await onSave(selected) } finally { setSaving(false) }
-  }
-
+function MealRow({ meal, label, isOpen, closedText, marked, isPresent, onMark, ownerMarked }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
-          <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
-          <h2 className="text-base font-bold text-gray-900 m-0">Food Preference</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Let the owner know your food preference</p>
-        </div>
-        <div className="px-5 py-4 space-y-2">
-          {PREF_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setSelected(opt.value)}
-              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border-2 transition text-left ${
-                selected === opt.value
-                  ? 'border-black bg-black text-white'
-                  : 'border-gray-100 bg-gray-50 text-gray-900 hover:border-gray-200'
-              }`}
-            >
-              <span className={`w-3 h-3 rounded-full flex-shrink-0 ${opt.dot}`} />
-              <span className="text-sm font-semibold">{opt.label}</span>
-              {selected === opt.value && <span className="ml-auto text-sm">✓</span>}
-            </button>
-          ))}
-        </div>
-        <div className="px-5 pb-8 pt-2 border-t border-gray-100">
-          <button
-            onClick={handleSave}
-            disabled={saving || !selected}
-            className="w-full bg-black text-white rounded-xl py-3.5 text-sm font-semibold hover:bg-gray-900 active:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? 'Saving…' : 'Save Preference'}
-          </button>
-        </div>
+    <div className="space-y-2">
+      {/* Status line */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-900">{label}</p>
+        {marked ? (
+          isPresent
+            ? <span className="text-xs font-semibold text-green-600">✓ Present</span>
+            : <span className="text-xs font-semibold text-red-500">✗ Absent</span>
+        ) : (
+          <span className="text-xs text-gray-400">Not marked</span>
+        )}
       </div>
+
+      {/* Button */}
+      {ownerMarked ? (
+        <button disabled className="w-full py-2.5 rounded-xl text-sm font-semibold bg-gray-100 text-gray-400 cursor-not-allowed">
+          Owner marked: {isPresent ? 'Present' : 'Absent'}
+        </button>
+      ) : isOpen ? (
+        <button
+          onClick={onMark}
+          className={`w-full py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] ${
+            isPresent
+              ? 'bg-black text-white hover:bg-gray-800'
+              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          }`}
+        >
+          {isPresent ? `Mark ${label} Absent` : `Mark ${label} Present`}
+        </button>
+      ) : (
+        <button disabled className="w-full py-2.5 rounded-xl text-sm font-semibold bg-gray-100 text-gray-400 cursor-not-allowed">
+          {closedText}
+        </button>
+      )}
     </div>
   )
 }
 
-// ─── Self attendance section ───────────────────────────────────────────────────
-
-function SelfAttendanceSection({ today, todayRecord, onMark }) {
+function SelfAttendanceSection({ todayRecord, onMark, onSetPref }) {
   const hour = new Date().getHours()
   const lunchOpen  = hour < 6   // before 6:00 AM
   const dinnerOpen = hour < 19  // before 7:00 PM
+  const prefOpen   = hour < 10  // before 10:00 AM
 
-  const ownerMarked = todayRecord && !todayRecord.selfMarked
-  const selfMarked  = todayRecord?.selfMarked === true
-  const lunch  = todayRecord?.lunch  ?? false
-  const dinner = todayRecord?.dinner ?? false
+  const ownerMarked = todayRecord != null && todayRecord.selfMarked !== true
+  const lunch     = todayRecord?.lunch     ?? false
+  const dinner    = todayRecord?.dinner    ?? false
+  const preference = todayRecord?.preference ?? null
+  const anyRecord  = todayRecord != null
+
+  const activePref = DAILY_PREFS.find(p => p.value === preference)
 
   return (
     <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100">
-      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Mark My Attendance</p>
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Mark Today's Attendance</p>
 
-      {ownerMarked ? (
-        <div className="bg-gray-50 rounded-xl px-4 py-3 text-center">
-          <p className="text-sm font-semibold text-gray-700">Owner has marked your attendance</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Lunch: {lunch ? 'Present' : 'Absent'} · Dinner: {dinner ? 'Present' : 'Absent'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {/* Lunch */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900">Lunch</p>
-              {!lunchOpen && <p className="text-[11px] text-gray-400">Marking closes at 6:00 AM</p>}
-              {selfMarked && lunchOpen && (
-                <p className="text-[11px] text-gray-400">Marked: {lunch ? 'Present' : 'Absent'}</p>
-              )}
-            </div>
-            {lunchOpen ? (
-              <button
-                onClick={() => onMark('lunch', !lunch)}
-                className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  lunch ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {lunch ? 'Present ✓' : 'Mark Present'}
-              </button>
-            ) : (
-              <span className="flex-shrink-0 text-xs text-gray-400 bg-gray-100 rounded-xl px-3 py-2">
-                Closed
-              </span>
-            )}
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-gray-100" />
-
-          {/* Dinner */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900">Dinner</p>
-              {!dinnerOpen && <p className="text-[11px] text-gray-400">Marking closes at 7:00 PM</p>}
-              {selfMarked && dinnerOpen && (
-                <p className="text-[11px] text-gray-400">Marked: {dinner ? 'Present' : 'Absent'}</p>
-              )}
-            </div>
-            {dinnerOpen ? (
-              <button
-                onClick={() => onMark('dinner', !dinner)}
-                className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  dinner ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {dinner ? 'Present ✓' : 'Mark Present'}
-              </button>
-            ) : (
-              <span className="flex-shrink-0 text-xs text-gray-400 bg-gray-100 rounded-xl px-3 py-2">
-                Closed
-              </span>
-            )}
-          </div>
-        </div>
+      {ownerMarked && (
+        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-3 font-medium">
+          Owner marked: Lunch {lunch ? 'Present' : 'Absent'} · Dinner {dinner ? 'Present' : 'Absent'}
+        </p>
       )}
+
+      {/* ── Daily meal preference ── */}
+      <div className="mb-4">
+        <p className="text-xs font-semibold text-gray-500 mb-2">Today's Meal Preference</p>
+        {prefOpen ? (
+          <div className="flex gap-2">
+            {DAILY_PREFS.map(p => (
+              <button
+                key={p.value}
+                onClick={() => onSetPref(p.value)}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-95 ${
+                  preference === p.value
+                    ? 'bg-black text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {p.emoji} {p.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2.5">
+            <span className="text-sm font-semibold text-gray-700">
+              {activePref ? `${activePref.emoji} ${activePref.label}` : 'Not selected'}
+            </span>
+            <span className="text-[11px] text-gray-400">Locked at 10:00 AM</span>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-gray-100 mb-3" />
+
+      {/* ── Attendance buttons ── */}
+      <div className="space-y-3">
+        <MealRow
+          meal="lunch"
+          label="Lunch"
+          isOpen={lunchOpen}
+          closedText="Lunch marking closed at 6:00 AM"
+          marked={anyRecord}
+          isPresent={lunch}
+          onMark={() => onMark('lunch', !lunch)}
+          ownerMarked={ownerMarked}
+        />
+
+        <div className="border-t border-gray-100" />
+
+        <MealRow
+          meal="dinner"
+          label="Dinner"
+          isOpen={dinnerOpen}
+          closedText="Dinner marking closed at 7:00 PM"
+          marked={anyRecord}
+          isPresent={dinner}
+          onMark={() => onMark('dinner', !dinner)}
+          ownerMarked={ownerMarked}
+        />
+      </div>
     </div>
   )
 }
@@ -459,15 +447,21 @@ export default function CustomerAttendance() {
   const [attendanceMap, setAttendanceMap] = useState({})
   const [todayMenu, setTodayMenu] = useState(undefined) // undefined = loading, null = not found
   const [loading, setLoading] = useState(true)
-  const [prefModal, setPrefModal] = useState(false)
 
   const today = todayKey()
   const [selectedDate, setSelectedDate] = useState(today)
 
-  async function handleSavePref(pref) {
-    await updateDoc(doc(db, 'customers', customerId), { preference: pref })
-    setCustomer(prev => ({ ...prev, preference: pref }))
-    setPrefModal(false)
+  async function handleSetPref(pref) {
+    const docId = `${customerId}_${today}`
+    const existing = attendanceMap[today] ?? {}
+    const newData = { ...existing, preference: pref, selfMarked: true, customerId, date: today }
+    setAttendanceMap(prev => ({ ...prev, [today]: newData }))
+    try {
+      await setDoc(doc(db, 'attendance', docId), { preference: pref, selfMarked: true, customerId, date: today }, { merge: true })
+    } catch (err) {
+      console.error('Failed to save preference:', err)
+      setAttendanceMap(prev => ({ ...prev, [today]: existing }))
+    }
   }
 
   async function handleSelfMark(meal, value) {
@@ -579,22 +573,13 @@ export default function CustomerAttendance() {
               <p className="text-gray-400 text-xs mt-0.5">{customer?.name || '—'}</p>
             </div>
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={() => setPrefModal(true)}
-              className="text-white/60 hover:text-white p-2 rounded-xl active:bg-white/10 transition"
-              aria-label="Food preference"
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              onClick={handleLogout}
-              className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
-              aria-label="Logout"
-            >
-              <LogoutIcon />
-            </button>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition flex-shrink-0"
+            aria-label="Logout"
+          >
+            <LogoutIcon />
+          </button>
         </div>
       </header>
 
@@ -650,10 +635,9 @@ export default function CustomerAttendance() {
 
               {/* Legend */}
               <div className="flex items-center gap-3 flex-wrap mt-4 pt-3 border-t border-gray-100">
-                <LegendItem color="bg-black" label="Present" />
-                <LegendItem color="bg-gray-100 border border-gray-200" label="Absent" />
+                <LegendItem color="bg-[#1a1a1a]" label="Present" />
+                <LegendItem color="bg-[#FF3B30]" label="Absent" />
                 <LegendItem color="bg-white border-2 border-black" label="Today" />
-                <LegendItem color="bg-white ring-2 ring-black" label="Selected" />
               </div>
             </div>
 
@@ -677,9 +661,9 @@ export default function CustomerAttendance() {
                 Today
               </p>
               <SelfAttendanceSection
-                today={today}
                 todayRecord={attendanceMap[today]}
                 onMark={handleSelfMark}
+                onSetPref={handleSetPref}
               />
             </div>
           </>
@@ -692,14 +676,6 @@ export default function CustomerAttendance() {
         <NavTab label="My Bill" icon={<ReceiptIcon />} onClick={() => navigate('/customer/bill')} />
       </nav>
 
-      {/* ── Preference modal ── */}
-      {prefModal && (
-        <PreferenceModal
-          current={customer?.preference}
-          onSave={handleSavePref}
-          onClose={() => setPrefModal(false)}
-        />
-      )}
     </div>
   )
 }

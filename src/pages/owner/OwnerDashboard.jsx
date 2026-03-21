@@ -295,12 +295,15 @@ function ExtraModal({ customer, record, onSave, onClose }) {
 
 // ─── Customer Row ─────────────────────────────────────────────────────────────
 
+const PREF_EMOJI = { veg: '🌿', nonveg: '🍖', fasting: '🙏' }
+
 function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
   const lunch = record?.lunch ?? false
   const dinner = record?.dinner ?? false
   const extraAmount = record?.extraAmount ?? 0
   const hasExtra = extraAmount > 0
   const isSaving = saving
+  const prefEmoji = PREF_EMOJI[record?.preference]
 
   return (
     <div className="bg-white rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm border border-gray-100">
@@ -313,9 +316,12 @@ function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
 
       {/* Name + rates */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-900 truncate leading-tight">
-          {customer.name}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-gray-900 truncate leading-tight">
+            {customer.name}
+          </p>
+          {prefEmoji && <span className="text-sm leading-none flex-shrink-0">{prefEmoji}</span>}
+        </div>
         <p className="text-xs text-gray-400 mt-0.5">
           L ₹{customer.lunchRate ?? '—'} · D ₹{customer.dinnerRate ?? '—'}
         </p>
@@ -493,6 +499,13 @@ export default function OwnerDashboard() {
   }).length
   const absentCount = customers.length - presentCount
 
+  const prefCounts = { veg: 0, nonveg: 0, fasting: 0 }
+  customers.forEach(c => {
+    const pref = attendance[c.id]?.preference
+    if (pref && prefCounts[pref] !== undefined) prefCounts[pref]++
+  })
+  const hasPrefData = prefCounts.veg + prefCounts.nonveg + prefCounts.fasting > 0
+
   // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col max-w-md mx-auto" style={{ fontFamily: "'DM Sans', sans-serif" }}>
@@ -560,26 +573,36 @@ export default function OwnerDashboard() {
       </header>
 
       {/* ── Stats bar ── */}
-      <div className="bg-white border-b border-gray-100 px-4 py-3 flex gap-3 flex-shrink-0">
-        <div className="flex items-center gap-2 bg-black text-white rounded-full px-3 py-1.5">
-          <span className="text-xs font-semibold">Present</span>
-          <span className="text-sm font-bold">{presentCount}</span>
+      <div className="bg-white border-b border-gray-100 px-4 pt-3 pb-2 flex-shrink-0 space-y-2">
+        <div className="flex gap-3">
+          <div className="flex items-center gap-2 bg-black text-white rounded-full px-3 py-1.5">
+            <span className="text-xs font-semibold">Present</span>
+            <span className="text-sm font-bold">{presentCount}</span>
+          </div>
+          <div className="flex items-center gap-2 bg-gray-100 text-gray-500 rounded-full px-3 py-1.5">
+            <span className="text-xs font-semibold">Absent</span>
+            <span className="text-sm font-bold">{absentCount}</span>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-gray-400">{customers.length} customers</span>
+            <button
+              onClick={() => setMenuModal(true)}
+              className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-600 rounded-full px-2.5 py-1.5 transition"
+              aria-label="Set today's menu"
+            >
+              <MenuIcon />
+              <span className="text-xs font-semibold">Menu</span>
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 bg-gray-100 text-gray-500 rounded-full px-3 py-1.5">
-          <span className="text-xs font-semibold">Absent</span>
-          <span className="text-sm font-bold">{absentCount}</span>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-gray-400">{customers.length} customers</span>
-          <button
-            onClick={() => setMenuModal(true)}
-            className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-600 rounded-full px-2.5 py-1.5 transition"
-            aria-label="Set today's menu"
-          >
-            <MenuIcon />
-            <span className="text-xs font-semibold">Menu</span>
-          </button>
-        </div>
+        {hasPrefData && (
+          <div className="flex items-center gap-3 pb-1">
+            <span className="text-[11px] text-gray-400 font-medium">Today's preference:</span>
+            <span className="text-[11px] font-semibold text-gray-700">🌿 Veg {prefCounts.veg}</span>
+            <span className="text-[11px] font-semibold text-gray-700">🍖 Non-Veg {prefCounts.nonveg}</span>
+            <span className="text-[11px] font-semibold text-gray-700">🙏 Fasting {prefCounts.fasting}</span>
+          </div>
+        )}
       </div>
 
       {/* ── List ── */}
