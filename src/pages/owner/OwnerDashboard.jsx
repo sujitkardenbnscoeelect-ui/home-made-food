@@ -557,10 +557,9 @@ export default function OwnerDashboard() {
           </button>
 
           <div className="flex-1 text-center">
-            {isToday && (
-              <p className="text-gray-400 text-[11px] font-semibold uppercase tracking-wide leading-none mb-0.5">Today</p>
-            )}
-            <p className="text-white text-sm font-semibold leading-tight">{displayDate}</p>
+            <p className="text-white text-sm font-semibold leading-tight">
+              {isToday ? `Today · ${displayDate}` : displayDate}
+            </p>
           </div>
 
           <button
