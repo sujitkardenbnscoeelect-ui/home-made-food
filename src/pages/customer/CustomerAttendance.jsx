@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
 import { signOut } from 'firebase/auth'
 import { db, auth } from '../../lib/firebase'
 import { useAuth } from '../../context/AuthContext'
@@ -59,6 +59,16 @@ function LogoutIcon() {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  )
+}
+
+function SettingsIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   )
 }
@@ -150,6 +160,76 @@ function CalendarGrid({ year, month, attendanceMap, today, selectedDate, onSelec
   )
 }
 
+// ─── Today's menu card ────────────────────────────────────────────────────────
+
+function TodayMenuCard({ menu }) {
+  if (!menu) {
+    return (
+      <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100 text-center">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Today's Menu</p>
+        <p className="text-sm text-gray-400">Menu not updated yet</p>
+      </div>
+    )
+  }
+
+  const hasLunch  = menu.lunchVeg || menu.lunchNonVeg
+  const hasDinner = menu.dinnerVeg || menu.dinnerNonVeg
+
+  return (
+    <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100">
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Today's Menu</p>
+
+      {hasLunch && (
+        <div className="mb-3">
+          <p className="text-[11px] font-bold text-black uppercase tracking-wide mb-1.5">Lunch</p>
+          <div className="space-y-1">
+            {menu.lunchVeg && (
+              <div className="flex gap-2 items-start">
+                <span className="mt-0.5 w-4 h-4 rounded-full bg-green-100 flex-shrink-0 flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-green-700">V</span>
+                </span>
+                <p className="text-sm text-gray-700">{menu.lunchVeg}</p>
+              </div>
+            )}
+            {menu.lunchNonVeg && (
+              <div className="flex gap-2 items-start">
+                <span className="mt-0.5 w-4 h-4 rounded-full bg-red-100 flex-shrink-0 flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-red-700">N</span>
+                </span>
+                <p className="text-sm text-gray-700">{menu.lunchNonVeg}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {hasDinner && (
+        <div className={hasLunch ? 'pt-3 border-t border-gray-100' : ''}>
+          <p className="text-[11px] font-bold text-black uppercase tracking-wide mb-1.5">Dinner</p>
+          <div className="space-y-1">
+            {menu.dinnerVeg && (
+              <div className="flex gap-2 items-start">
+                <span className="mt-0.5 w-4 h-4 rounded-full bg-green-100 flex-shrink-0 flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-green-700">V</span>
+                </span>
+                <p className="text-sm text-gray-700">{menu.dinnerVeg}</p>
+              </div>
+            )}
+            {menu.dinnerNonVeg && (
+              <div className="flex gap-2 items-start">
+                <span className="mt-0.5 w-4 h-4 rounded-full bg-red-100 flex-shrink-0 flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-red-700">N</span>
+                </span>
+                <p className="text-sm text-gray-700">{menu.dinnerNonVeg}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Selected day detail card ─────────────────────────────────────────────────
 
 function SelectedDayCard({ dateStr, record, customer }) {
@@ -222,6 +302,145 @@ function SelectedDayCard({ dateStr, record, customer }) {
   )
 }
 
+// ─── Preference modal ─────────────────────────────────────────────────────────
+
+const PREF_OPTIONS = [
+  { value: 'veg',     label: 'Veg',     dot: 'bg-green-400' },
+  { value: 'nonveg',  label: 'Non-Veg', dot: 'bg-red-400'   },
+  { value: 'fasting', label: 'Fasting', dot: 'bg-yellow-400' },
+]
+
+function PreferenceModal({ current, onSave, onClose }) {
+  const [selected, setSelected] = useState(current ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    try { await onSave(selected) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
+          <h2 className="text-base font-bold text-gray-900 m-0">Food Preference</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Let the owner know your food preference</p>
+        </div>
+        <div className="px-5 py-4 space-y-2">
+          {PREF_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setSelected(opt.value)}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border-2 transition text-left ${
+                selected === opt.value
+                  ? 'border-black bg-black text-white'
+                  : 'border-gray-100 bg-gray-50 text-gray-900 hover:border-gray-200'
+              }`}
+            >
+              <span className={`w-3 h-3 rounded-full flex-shrink-0 ${opt.dot}`} />
+              <span className="text-sm font-semibold">{opt.label}</span>
+              {selected === opt.value && <span className="ml-auto text-sm">✓</span>}
+            </button>
+          ))}
+        </div>
+        <div className="px-5 pb-8 pt-2 border-t border-gray-100">
+          <button
+            onClick={handleSave}
+            disabled={saving || !selected}
+            className="w-full bg-black text-white rounded-xl py-3.5 text-sm font-semibold hover:bg-gray-900 active:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? 'Saving…' : 'Save Preference'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Self attendance section ───────────────────────────────────────────────────
+
+function SelfAttendanceSection({ today, todayRecord, onMark }) {
+  const hour = new Date().getHours()
+  const lunchOpen  = hour < 6   // before 6:00 AM
+  const dinnerOpen = hour < 19  // before 7:00 PM
+
+  const ownerMarked = todayRecord && !todayRecord.selfMarked
+  const selfMarked  = todayRecord?.selfMarked === true
+  const lunch  = todayRecord?.lunch  ?? false
+  const dinner = todayRecord?.dinner ?? false
+
+  return (
+    <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100">
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Mark My Attendance</p>
+
+      {ownerMarked ? (
+        <div className="bg-gray-50 rounded-xl px-4 py-3 text-center">
+          <p className="text-sm font-semibold text-gray-700">Owner has marked your attendance</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Lunch: {lunch ? 'Present' : 'Absent'} · Dinner: {dinner ? 'Present' : 'Absent'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Lunch */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Lunch</p>
+              {!lunchOpen && <p className="text-[11px] text-gray-400">Marking closes at 6:00 AM</p>}
+              {selfMarked && lunchOpen && (
+                <p className="text-[11px] text-gray-400">Marked: {lunch ? 'Present' : 'Absent'}</p>
+              )}
+            </div>
+            {lunchOpen ? (
+              <button
+                onClick={() => onMark('lunch', !lunch)}
+                className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  lunch ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {lunch ? 'Present ✓' : 'Mark Present'}
+              </button>
+            ) : (
+              <span className="flex-shrink-0 text-xs text-gray-400 bg-gray-100 rounded-xl px-3 py-2">
+                Closed
+              </span>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-gray-100" />
+
+          {/* Dinner */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Dinner</p>
+              {!dinnerOpen && <p className="text-[11px] text-gray-400">Marking closes at 7:00 PM</p>}
+              {selfMarked && dinnerOpen && (
+                <p className="text-[11px] text-gray-400">Marked: {dinner ? 'Present' : 'Absent'}</p>
+              )}
+            </div>
+            {dinnerOpen ? (
+              <button
+                onClick={() => onMark('dinner', !dinner)}
+                className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  dinner ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {dinner ? 'Present ✓' : 'Mark Present'}
+              </button>
+            ) : (
+              <span className="flex-shrink-0 text-xs text-gray-400 bg-gray-100 rounded-xl px-3 py-2">
+                Closed
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function CustomerAttendance() {
@@ -238,10 +457,31 @@ export default function CustomerAttendance() {
 
   const [customer, setCustomer] = useState(null)
   const [attendanceMap, setAttendanceMap] = useState({})
+  const [todayMenu, setTodayMenu] = useState(undefined) // undefined = loading, null = not found
   const [loading, setLoading] = useState(true)
+  const [prefModal, setPrefModal] = useState(false)
 
   const today = todayKey()
   const [selectedDate, setSelectedDate] = useState(today)
+
+  async function handleSavePref(pref) {
+    await updateDoc(doc(db, 'customers', customerId), { preference: pref })
+    setCustomer(prev => ({ ...prev, preference: pref }))
+    setPrefModal(false)
+  }
+
+  async function handleSelfMark(meal, value) {
+    const docId = `${customerId}_${today}`
+    const existing = attendanceMap[today] ?? {}
+    const newData = { ...existing, [meal]: value, selfMarked: true, customerId, date: today }
+    setAttendanceMap(prev => ({ ...prev, [today]: newData }))
+    try {
+      await setDoc(doc(db, 'attendance', docId), { [meal]: value, selfMarked: true, customerId, date: today }, { merge: true })
+    } catch (err) {
+      console.error('Failed to save self attendance:', err)
+      setAttendanceMap(prev => ({ ...prev, [today]: existing }))
+    }
+  }
 
   async function handleLogout() {
     if (window.confirm('Are you sure you want to logout?')) {
@@ -268,6 +508,10 @@ export default function CustomerAttendance() {
       const aSnap = await getDocs(
         query(collection(db, 'attendance'), where('customerId', '==', customerId))
       )
+
+      // Today's menu (fetch once regardless of selected month)
+      const menuSnap = await getDoc(doc(db, 'menus', today))
+      setTodayMenu(menuSnap.exists() ? menuSnap.data() : null)
 
       console.log('customerId:', customerId)
       console.log('attendance records found:', aSnap.size)
@@ -335,13 +579,22 @@ export default function CustomerAttendance() {
               <p className="text-gray-400 text-xs mt-0.5">{customer?.name || '—'}</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition flex-shrink-0"
-            aria-label="Logout"
-          >
-            <LogoutIcon />
-          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={() => setPrefModal(true)}
+              className="text-white/60 hover:text-white p-2 rounded-xl active:bg-white/10 transition"
+              aria-label="Food preference"
+            >
+              <SettingsIcon />
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-white/60 hover:text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
+              aria-label="Logout"
+            >
+              <LogoutIcon />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -359,6 +612,11 @@ export default function CustomerAttendance() {
           </div>
         ) : (
           <>
+            {/* ── Today's menu ── */}
+            {todayMenu !== undefined && (
+              <TodayMenuCard menu={todayMenu} />
+            )}
+
             {/* ── Calendar card ── */}
             <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100">
               {/* Month header */}
@@ -412,6 +670,18 @@ export default function CustomerAttendance() {
                 />
               </div>
             )}
+
+            {/* ── Self attendance ── */}
+            <div>
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1 mb-2">
+                Today
+              </p>
+              <SelfAttendanceSection
+                today={today}
+                todayRecord={attendanceMap[today]}
+                onMark={handleSelfMark}
+              />
+            </div>
           </>
         )}
       </main>
@@ -421,6 +691,15 @@ export default function CustomerAttendance() {
         <NavTab label="Attendance" icon={<HomeIcon />} active onClick={() => {}} />
         <NavTab label="My Bill" icon={<ReceiptIcon />} onClick={() => navigate('/customer/bill')} />
       </nav>
+
+      {/* ── Preference modal ── */}
+      {prefModal && (
+        <PreferenceModal
+          current={customer?.preference}
+          onSave={handleSavePref}
+          onClose={() => setPrefModal(false)}
+        />
+      )}
     </div>
   )
 }

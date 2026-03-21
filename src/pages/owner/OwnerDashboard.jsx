@@ -5,6 +5,7 @@ import {
   query,
   where,
   getDocs,
+  getDoc,
   setDoc,
   doc,
 } from 'firebase/firestore'
@@ -127,6 +128,112 @@ function ChevronRightIcon() {
       stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
       <polyline points="9 18 15 12 9 6" />
     </svg>
+  )
+}
+
+function MenuIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" />
+      <path d="M7 2v20" />
+      <path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7" />
+    </svg>
+  )
+}
+
+// ─── Menu Modal ───────────────────────────────────────────────────────────────
+
+function MenuModal({ dateKey, onClose }) {
+  const [fields, setFields] = useState({ lunchVeg: '', lunchNonVeg: '', dinnerVeg: '', dinnerNonVeg: '' })
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    getDoc(doc(db, 'menus', dateKey)).then(snap => {
+      if (snap.exists()) {
+        const d = snap.data()
+        setFields({
+          lunchVeg:    d.lunchVeg    ?? '',
+          lunchNonVeg: d.lunchNonVeg ?? '',
+          dinnerVeg:   d.dinnerVeg   ?? '',
+          dinnerNonVeg: d.dinnerNonVeg ?? '',
+        })
+      }
+      setLoaded(true)
+    })
+  }, [dateKey])
+
+  function set(key, val) { setFields(f => ({ ...f, [key]: val })) }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await setDoc(doc(db, 'menus', dateKey), { date: dateKey, ...fields })
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-black placeholder:text-gray-300'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-t-2xl px-6 pt-5 pb-10 shadow-xl"
+        onClick={e => e.stopPropagation()}>
+        <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5" />
+        <h3 className="text-base font-semibold text-gray-900 mb-0.5">Today's Menu</h3>
+        <p className="text-xs text-gray-400 mb-5">{dateKey}</p>
+
+        {!loaded ? (
+          <div className="flex justify-center py-8">
+            <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Lunch */}
+            <div>
+              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Lunch</p>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Veg</label>
+                  <input value={fields.lunchVeg} onChange={e => set('lunchVeg', e.target.value)}
+                    placeholder="Dal, Rice, Sabzi, Roti…" className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Non-Veg</label>
+                  <input value={fields.lunchNonVeg} onChange={e => set('lunchNonVeg', e.target.value)}
+                    placeholder="Chicken Curry, Rice, Roti…" className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            {/* Dinner */}
+            <div>
+              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Dinner</p>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Veg</label>
+                  <input value={fields.dinnerVeg} onChange={e => set('dinnerVeg', e.target.value)}
+                    placeholder="Dal, Sabzi, Roti…" className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Non-Veg</label>
+                  <input value={fields.dinnerNonVeg} onChange={e => set('dinnerNonVeg', e.target.value)}
+                    placeholder="Mutton Curry, Roti…" className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <button onClick={handleSave} disabled={saving}
+              className="w-full bg-black text-white rounded-xl py-3 text-sm font-semibold hover:bg-gray-900 active:bg-gray-800 transition disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save Menu'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -272,6 +379,7 @@ export default function OwnerDashboard() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [modal, setModal] = useState(null)
+  const [menuModal, setMenuModal] = useState(false)
 
   // ── logout ─────────────────────────────────────────────────────────────────
   async function handleLogout() {
@@ -461,8 +569,16 @@ export default function OwnerDashboard() {
           <span className="text-xs font-semibold">Absent</span>
           <span className="text-sm font-bold">{absentCount}</span>
         </div>
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-gray-400">{customers.length} customers</span>
+          <button
+            onClick={() => setMenuModal(true)}
+            className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-600 rounded-full px-2.5 py-1.5 transition"
+            aria-label="Set today's menu"
+          >
+            <MenuIcon />
+            <span className="text-xs font-semibold">Menu</span>
+          </button>
         </div>
       </div>
 
@@ -516,6 +632,11 @@ export default function OwnerDashboard() {
           onClick={() => navigate('/owner/bills')}
         />
       </nav>
+
+      {/* ── Menu Modal ── */}
+      {menuModal && (
+        <MenuModal dateKey={today} onClose={() => setMenuModal(false)} />
+      )}
 
       {/* ── Extra Meal Modal ── */}
       {modal && (

@@ -90,6 +90,22 @@ function RatePill({ label, value }) {
   )
 }
 
+const PREF_STYLES = {
+  veg:     { label: 'Veg',     cls: 'bg-green-100 text-green-700' },
+  nonveg:  { label: 'Non-Veg', cls: 'bg-red-100 text-red-700'     },
+  fasting: { label: 'Fasting', cls: 'bg-yellow-100 text-yellow-700' },
+}
+
+function PrefPill({ preference }) {
+  const style = PREF_STYLES[preference]
+  if (!style) return null
+  return (
+    <span className={`inline-flex items-center text-[10px] font-bold rounded-full px-2 py-0.5 ${style.cls}`}>
+      {style.label}
+    </span>
+  )
+}
+
 // ─── Customer Form Modal ──────────────────────────────────────────────────────
 
 function CustomerModal({ mode, initial, onSave, onClose }) {
@@ -268,9 +284,10 @@ function CustomerRow({ customer, onTap }) {
 
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-gray-900 truncate">{customer.name}</p>
-        <div className="flex items-center gap-1.5 mt-1">
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
           <RatePill label="Lunch" value={customer.lunchRate} />
           <RatePill label="Dinner" value={customer.dinnerRate} />
+          {customer.preference && <PrefPill preference={customer.preference} />}
         </div>
       </div>
 
