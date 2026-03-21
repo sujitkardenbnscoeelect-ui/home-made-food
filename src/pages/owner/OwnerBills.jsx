@@ -134,14 +134,13 @@ function MonthPicker({ year, month, onChange, onClose }) {
 // ─── Bill Card ────────────────────────────────────────────────────────────────
 
 function BillCard({ customer, billData, paid, onPDF, onWhatsApp, onMarkPaid }) {
-  const { lunchDays, dinnerDays, extraLunch, extraDinner, total } = billData
+  const { lunchDays, dinnerDays, extraAmount, total } = billData
   const longPressTimer = useRef(null)
 
-  const totalExtra = extraLunch + extraDinner
   const summaryParts = []
   if (lunchDays) summaryParts.push(`${lunchDays}L`)
   if (dinnerDays) summaryParts.push(`${dinnerDays}D`)
-  if (totalExtra) summaryParts.push(`${totalExtra} extra`)
+  if (extraAmount) summaryParts.push(`₹${extraAmount} extra`)
 
   function startLongPress() {
     longPressTimer.current = setTimeout(() => {

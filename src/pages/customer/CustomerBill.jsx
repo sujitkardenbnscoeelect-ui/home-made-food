@@ -86,7 +86,7 @@ function WhatsAppIcon() {
 // ─── Day row ─────────────────────────────────────────────────────────────────
 
 function DayRow({ dateStr, record, customer }) {
-  const isAbsent = !record || (!record.lunch && !record.dinner && !record.extraLunch && !record.extraDinner)
+  const isAbsent = !record || (!record.lunch && !record.dinner && !record.extraAmount)
   const dayNum = formatDay(dateStr)
   const dayLabel = formatDayLabel(dateStr)
   const dayOfWeek = formatDayOfWeek(dateStr)
@@ -94,10 +94,9 @@ function DayRow({ dateStr, record, customer }) {
   const rowAmt = isAbsent ? 0
     : (record.lunch ? customer.lunchRate : 0)
     + (record.dinner ? customer.dinnerRate : 0)
-    + (record.extraLunch ?? 0) * customer.lunchRate
-    + (record.extraDinner ?? 0) * customer.dinnerRate
+    + (record.extraAmount ?? 0)
 
-  const extra = !isAbsent && ((record.extraLunch ?? 0) + (record.extraDinner ?? 0)) > 0
+  const extra = !isAbsent && (record.extraAmount ?? 0) > 0
 
   return (
     <div className={`flex items-center gap-3 py-2.5 px-4 border-b border-gray-50 last:border-0 ${isAbsent ? 'opacity-50' : ''}`}>
@@ -121,7 +120,7 @@ function DayRow({ dateStr, record, customer }) {
             )}
             {extra && (
               <span className="text-[11px] font-medium bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">
-                +{(record.extraLunch ?? 0) + (record.extraDinner ?? 0)} extra
+                +₹{record.extraAmount}
               </span>
             )}
           </>
@@ -272,8 +271,7 @@ export default function CustomerBill() {
                   {[
                     billData?.lunchDays ? `${billData.lunchDays} Lunch` : '',
                     billData?.dinnerDays ? `${billData.dinnerDays} Dinner` : '',
-                    (billData?.extraLunch ?? 0) + (billData?.extraDinner ?? 0) > 0
-                      ? `${(billData?.extraLunch ?? 0) + (billData?.extraDinner ?? 0)} Extra` : '',
+                    (billData?.extraAmount ?? 0) > 0 ? `₹${billData.extraAmount} Extra` : '',
                   ].filter(Boolean).join(' · ') || 'No meals recorded yet'}
                 </p>
 

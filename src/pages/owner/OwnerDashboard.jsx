@@ -42,7 +42,7 @@ function formatDisplayDate(dateStr) {
   })
 }
 
-const EMPTY_RECORD = { lunch: false, dinner: false, extraLunch: 0, extraDinner: 0 }
+const EMPTY_RECORD = { lunch: false, dinner: false, extraAmount: 0 }
 
 // ─── icons ───────────────────────────────────────────────────────────────────
 
@@ -121,13 +121,10 @@ function ChevronRightIcon() {
 // ─── Extra Meal Modal ────────────────────────────────────────────────────────
 
 function ExtraModal({ customer, record, onSave, onClose }) {
-  const [extraLunch, setExtraLunch] = useState(String(record?.extraLunch ?? 0))
-  const [extraDinner, setExtraDinner] = useState(String(record?.extraDinner ?? 0))
+  const [amount, setAmount] = useState(String(record?.extraAmount ?? 0))
 
   function handleSave() {
-    const el = Math.max(0, parseInt(extraLunch, 10) || 0)
-    const ed = Math.max(0, parseInt(extraDinner, 10) || 0)
-    onSave(el, ed)
+    onSave(Math.max(0, parseInt(amount, 10) || 0))
   }
 
   return (
@@ -137,60 +134,33 @@ function ExtraModal({ customer, record, onSave, onClose }) {
         className="w-full max-w-md bg-white rounded-t-2xl px-6 pt-5 pb-8 shadow-xl"
         onClick={e => e.stopPropagation()}
       >
-        {/* drag handle */}
         <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5" />
 
-        <h3 className="text-base font-semibold text-gray-900 mb-1">
-          Extra Meals
-        </h3>
+        <h3 className="text-base font-semibold text-gray-900 mb-1">Extra Amount</h3>
         <p className="text-sm text-gray-400 mb-5">{customer.name}</p>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-              Extra Lunch
-            </label>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setExtraLunch(v => String(Math.max(0, (parseInt(v) || 0) - 1)))}
-                className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
-              >−</button>
-              <input
-                type="number"
-                min="0"
-                value={extraLunch}
-                onChange={e => setExtraLunch(e.target.value)}
-                className="w-16 text-center border border-gray-200 rounded-lg py-2 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-black"
-              />
-              <button
-                onClick={() => setExtraLunch(v => String((parseInt(v) || 0) + 1))}
-                className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
-              >+</button>
-            </div>
+        <label className="block text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">
+          Amount (₹)
+        </label>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setAmount(v => String(Math.max(0, (parseInt(v) || 0) - 10)))}
+            className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
+          >−</button>
+          <div className="flex-1 relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-gray-400">₹</span>
+            <input
+              type="number"
+              min="0"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="w-full pl-7 pr-3 border border-gray-200 rounded-lg py-2.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-black"
+            />
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-              Extra Dinner
-            </label>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setExtraDinner(v => String(Math.max(0, (parseInt(v) || 0) - 1)))}
-                className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
-              >−</button>
-              <input
-                type="number"
-                min="0"
-                value={extraDinner}
-                onChange={e => setExtraDinner(e.target.value)}
-                className="w-16 text-center border border-gray-200 rounded-lg py-2 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-black"
-              />
-              <button
-                onClick={() => setExtraDinner(v => String((parseInt(v) || 0) + 1))}
-                className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
-              >+</button>
-            </div>
-          </div>
+          <button
+            onClick={() => setAmount(v => String((parseInt(v) || 0) + 10))}
+            className="w-9 h-9 rounded-full border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 active:bg-gray-100"
+          >+</button>
         </div>
 
         <button
@@ -209,7 +179,8 @@ function ExtraModal({ customer, record, onSave, onClose }) {
 function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
   const lunch = record?.lunch ?? false
   const dinner = record?.dinner ?? false
-  const hasExtra = (record?.extraLunch ?? 0) > 0 || (record?.extraDinner ?? 0) > 0
+  const extraAmount = record?.extraAmount ?? 0
+  const hasExtra = extraAmount > 0
   const isSaving = saving
 
   return (
@@ -256,22 +227,17 @@ function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
           D
         </button>
 
-        {/* Extra meals */}
+        {/* Extra amount */}
         <button
           disabled={isSaving}
           onClick={onExtra}
-          className={`w-9 h-9 rounded-xl text-base font-bold transition-all active:scale-95 flex items-center justify-center relative ${
+          className={`h-9 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center px-2 relative ${
             hasExtra
-              ? 'bg-gray-900 text-white'
-              : 'border-2 border-gray-200 text-gray-400'
+              ? 'bg-gray-900 text-white min-w-[3rem]'
+              : 'w-9 border-2 border-gray-200 text-gray-400'
           } disabled:opacity-40`}
         >
-          +
-          {hasExtra && (
-            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-white border border-gray-200 rounded-full text-[8px] font-bold text-gray-900 flex items-center justify-center leading-none">
-              {(record?.extraLunch ?? 0) + (record?.extraDinner ?? 0)}
-            </span>
-          )}
+          {hasExtra ? `₹${extraAmount}` : '+'}
         </button>
       </div>
     </div>
@@ -357,8 +323,7 @@ export default function OwnerDashboard() {
         date: selectedDate,
         lunch: updated.lunch,
         dinner: updated.dinner,
-        extraLunch: updated.extraLunch ?? 0,
-        extraDinner: updated.extraDinner ?? 0,
+        extraAmount: updated.extraAmount ?? 0,
       })
     } catch {
       setAttendance(prev => ({ ...prev, [cid]: current }))
@@ -368,10 +333,10 @@ export default function OwnerDashboard() {
   }
 
   // ── save extras ────────────────────────────────────────────────────────────
-  async function handleSaveExtra(customer, extraLunch, extraDinner) {
+  async function handleSaveExtra(customer, extraAmount) {
     const cid = customer.id
     const current = attendance[cid] ?? { ...EMPTY_RECORD }
-    const updated = { ...current, extraLunch, extraDinner }
+    const updated = { ...current, extraAmount }
     const docId = `${cid}_${selectedDate}`
 
     setAttendance(prev => ({ ...prev, [cid]: updated }))
@@ -384,8 +349,7 @@ export default function OwnerDashboard() {
         date: selectedDate,
         lunch: updated.lunch,
         dinner: updated.dinner,
-        extraLunch,
-        extraDinner,
+        extraAmount,
       })
     } catch {
       setAttendance(prev => ({ ...prev, [cid]: current }))
@@ -529,7 +493,7 @@ export default function OwnerDashboard() {
         <ExtraModal
           customer={modal.customer}
           record={attendance[modal.customer.id]}
-          onSave={(el, ed) => handleSaveExtra(modal.customer, el, ed)}
+          onSave={(amt) => handleSaveExtra(modal.customer, amt)}
           onClose={() => setModal(null)}
         />
       )}

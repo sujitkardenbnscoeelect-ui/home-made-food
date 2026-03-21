@@ -18,16 +18,15 @@ export function getMonthBounds(year, month) {
 }
 
 export function calcBill(customer, attendanceDocs) {
-  let lunchDays = 0, dinnerDays = 0, extraLunch = 0, extraDinner = 0
+  let lunchDays = 0, dinnerDays = 0, extraAmount = 0
   const attendanceRows = []
 
   for (const a of attendanceDocs) {
-    const hasActivity = a.lunch || a.dinner || a.extraLunch || a.extraDinner
+    const hasActivity = a.lunch || a.dinner || a.extraAmount
     if (!hasActivity) continue
     if (a.lunch) lunchDays++
     if (a.dinner) dinnerDays++
-    extraLunch += a.extraLunch ?? 0
-    extraDinner += a.extraDinner ?? 0
+    extraAmount += a.extraAmount ?? 0
     attendanceRows.push(a)
   }
 
@@ -36,14 +35,13 @@ export function calcBill(customer, attendanceDocs) {
   const total =
     lunchDays * (customer.lunchRate ?? 0) +
     dinnerDays * (customer.dinnerRate ?? 0) +
-    extraLunch * (customer.lunchRate ?? 0) +
-    extraDinner * (customer.dinnerRate ?? 0)
+    extraAmount
 
-  return { lunchDays, dinnerDays, extraLunch, extraDinner, total, attendanceRows }
+  return { lunchDays, dinnerDays, extraAmount, total, attendanceRows }
 }
 
 export function generateBillPDF(customer, billData, year, month) {
-  const { lunchDays, dinnerDays, extraLunch, extraDinner, total, attendanceRows } = billData
+  const { lunchDays, dinnerDays, extraAmount, total, attendanceRows } = billData
   const monthName = MONTH_NAMES[month - 1]
   const monthShort = MONTH_SHORT[month - 1]
   const invoiceNum = `HMF-${monthShort}-${year}-${String(customer.invoiceIndex ?? 1).padStart(3, '0')}`
@@ -116,13 +114,10 @@ export function generateBillPDF(customer, billData, year, month) {
     }
     rowBg = !rowBg
     const mealsStr = [row.lunch ? 'Lunch' : '', row.dinner ? 'Dinner' : ''].filter(Boolean).join(' + ') || '—'
-    const extraStr = (row.extraLunch || row.extraDinner)
-      ? [row.extraLunch ? `+${row.extraLunch}L` : '', row.extraDinner ? `+${row.extraDinner}D` : ''].filter(Boolean).join(' ')
-      : '—'
+    const extraStr = (row.extraAmount ?? 0) > 0 ? `₹${row.extraAmount}` : '—'
     const rowAmt = (row.lunch ? customer.lunchRate : 0)
       + (row.dinner ? customer.dinnerRate : 0)
-      + (row.extraLunch ?? 0) * customer.lunchRate
-      + (row.extraDinner ?? 0) * customer.dinnerRate
+      + (row.extraAmount ?? 0)
     pdf.setTextColor(80, 80, 80)
     pdf.text(row.date, col.date, y + 2)
     pdf.setTextColor(0, 0, 0)
@@ -150,8 +145,7 @@ export function generateBillPDF(customer, billData, year, month) {
 
   totalRow(`Lunch (${lunchDays} days × ₹${customer.lunchRate})`, lunchDays * customer.lunchRate)
   totalRow(`Dinner (${dinnerDays} days × ₹${customer.dinnerRate})`, dinnerDays * customer.dinnerRate)
-  if (extraLunch > 0) totalRow(`Extra Lunch (${extraLunch} × ₹${customer.lunchRate})`, extraLunch * customer.lunchRate)
-  if (extraDinner > 0) totalRow(`Extra Dinner (${extraDinner} × ₹${customer.dinnerRate})`, extraDinner * customer.dinnerRate)
+  if (extraAmount > 0) totalRow('Extra Charges', extraAmount)
 
   y += 4
   pdf.setFillColor(0, 0, 0)
