@@ -97,10 +97,10 @@ function CalendarGrid({ year, month, attendanceMap, today, selectedDate, onSelec
     if (!day) return 'empty'
     const key = makeKey(year, month, day)
     if (key > today) return 'future'
-    if (key === today) return 'today'
     const record = attendanceMap[key]
-    if (record && (record.lunch || record.dinner)) return 'present'
-    return 'absent'
+    const isPresent = record?.lunch || record?.dinner
+    if (key === today) return isPresent ? 'present-today' : 'today'
+    return isPresent ? 'present' : 'absent'
   }
 
   return (
@@ -120,13 +120,13 @@ function CalendarGrid({ year, month, attendanceMap, today, selectedDate, onSelec
           const key = makeKey(year, month, day)
           const state = getDayState(day)
           const isSelected = key === selectedDate
-          const isTappable = state !== 'future'
+          const isTappable = state !== 'future' && state !== 'empty'
 
           // Circle styles per state
           let circleClass = 'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all'
           if (isSelected) {
             circleClass += ' bg-white text-black border-2 border-black border-dashed'
-          } else if (state === 'present') {
+          } else if (state === 'present' || state === 'present-today') {
             circleClass += ' bg-[#1a1a1a] text-white'
           } else if (state === 'today') {
             circleClass += ' bg-white border-2 border-black text-black'
@@ -296,135 +296,161 @@ function SelectedDayCard({ dateStr, record, customer }) {
   )
 }
 
-const DAILY_PREFS = [
+const PREFS = [
   { value: 'veg',     emoji: '🌿', label: 'Veg'     },
   { value: 'nonveg',  emoji: '🍖', label: 'Non-Veg' },
   { value: 'fasting', emoji: '🙏', label: 'Fasting'  },
 ]
 
-// ─── Self attendance section ───────────────────────────────────────────────────
+// ─── Single meal block ────────────────────────────────────────────────────────
 
-function MealRow({ meal, label, isOpen, closedText, marked, isPresent, onMark, ownerMarked }) {
-  return (
-    <div className="space-y-2">
-      {/* Status line */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-gray-900">{label}</p>
-        {marked ? (
-          isPresent
-            ? <span className="text-xs font-semibold text-green-600">✓ Present</span>
-            : <span className="text-xs font-semibold text-red-500">✗ Absent</span>
+function MealBlock({ meal, isOpen, closedAt, todayRecord, ownerMarked, onSave }) {
+  const savedAttendance = todayRecord?.[meal]
+  const savedPref       = todayRecord?.[`${meal}Preference`]
+
+  // key prop on MealBlock handles remount when data first loads;
+  // useState initializes correctly from props on each mount
+  const [attendance, setAttendance] = useState(savedAttendance ?? null)
+  const [pref, setPref]             = useState(savedPref ?? null)
+  const [saving, setSaving]         = useState(false)
+
+  const title = meal === 'lunch' ? 'Lunch' : 'Dinner'
+  const savedPrefEntry = PREFS.find(p => p.value === savedPref)
+
+  // ── Owner already marked ────────────────────────────────────────────────────
+  if (ownerMarked) {
+    return (
+      <div className="bg-gray-50 rounded-2xl px-4 py-4 border border-gray-100">
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">{title}</p>
+          <span className="text-[11px] text-gray-400 bg-white rounded-full px-2 py-0.5 border border-gray-200">Owner marked</span>
+        </div>
+        <p className="text-sm font-semibold text-gray-600">
+          {savedAttendance ? '✓ Present' : '✗ Absent'}
+          {savedPrefEntry && <span className="font-normal text-gray-400"> · {savedPrefEntry.emoji} {savedPrefEntry.label}</span>}
+        </p>
+      </div>
+    )
+  }
+
+  // ── Time window closed ──────────────────────────────────────────────────────
+  if (!isOpen) {
+    return (
+      <div className="bg-gray-50 rounded-2xl px-4 py-4 border border-gray-100">
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">{title}</p>
+          <span className="text-[11px] text-red-400 font-semibold">Closed at {closedAt}</span>
+        </div>
+        {savedAttendance != null ? (
+          <p className="text-sm font-semibold text-gray-600">
+            {savedAttendance ? '✓ Present' : '✗ Absent'}
+            {savedPrefEntry && <span className="font-normal text-gray-400"> · {savedPrefEntry.emoji} {savedPrefEntry.label}</span>}
+          </p>
         ) : (
-          <span className="text-xs text-gray-400">Not marked</span>
+          <p className="text-sm text-gray-400">Not marked</p>
         )}
       </div>
+    )
+  }
 
-      {/* Button */}
-      {ownerMarked ? (
-        <button disabled className="w-full py-2.5 rounded-xl text-sm font-semibold bg-gray-100 text-gray-400 cursor-not-allowed">
-          Owner marked: {isPresent ? 'Present' : 'Absent'}
-        </button>
-      ) : isOpen ? (
+  // ── Active ──────────────────────────────────────────────────────────────────
+  async function handleSave() {
+    if (attendance === null) return
+    setSaving(true)
+    try { await onSave(attendance, pref) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl px-4 py-4 border border-gray-100 shadow-sm">
+      <p className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-3">{title}</p>
+
+      {/* Attendance: Present / Absent */}
+      <p className="text-xs text-gray-500 mb-2">Will you have {title} today?</p>
+      <div className="flex gap-2 mb-4">
         <button
-          onClick={onMark}
-          className={`w-full py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] ${
-            isPresent
-              ? 'bg-black text-white hover:bg-gray-800'
-              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          onClick={() => setAttendance(true)}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] ${
+            attendance === true ? 'bg-black text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
-          {isPresent ? `Mark ${label} Absent` : `Mark ${label} Present`}
+          ✓ Present
         </button>
-      ) : (
-        <button disabled className="w-full py-2.5 rounded-xl text-sm font-semibold bg-gray-100 text-gray-400 cursor-not-allowed">
-          {closedText}
+        <button
+          onClick={() => setAttendance(false)}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] ${
+            attendance === false ? 'bg-black text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          ✗ Absent
         </button>
-      )}
+      </div>
+
+      {/* Preference: Veg / Non-Veg / Fasting */}
+      <p className="text-xs text-gray-500 mb-2">{title} preference:</p>
+      <div className="flex gap-2 mb-4">
+        {PREFS.map(p => (
+          <button
+            key={p.value}
+            onClick={() => setPref(p.value)}
+            className={`flex-1 py-2 rounded-xl text-sm font-semibold transition active:scale-[0.98] ${
+              pref === p.value ? 'bg-black text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {p.emoji} {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Save button */}
+      <button
+        onClick={handleSave}
+        disabled={saving || attendance === null}
+        className="w-full py-3 rounded-xl text-sm font-semibold bg-black text-white hover:bg-gray-800 active:bg-gray-900 transition disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {saving ? 'Saving…' : `Save ${title}`}
+      </button>
     </div>
   )
 }
 
-function SelfAttendanceSection({ todayRecord, onMark, onSetPref }) {
+// ─── Self attendance section ───────────────────────────────────────────────────
+
+function SelfAttendanceSection({ todayRecord, onSaveMeal }) {
   const hour = new Date().getHours()
   const lunchOpen  = hour < 6   // before 6:00 AM
   const dinnerOpen = hour < 19  // before 7:00 PM
-  const prefOpen   = hour < 10  // before 10:00 AM
 
   const ownerMarked = todayRecord != null && todayRecord.selfMarked !== true
-  const lunch     = todayRecord?.lunch     ?? false
-  const dinner    = todayRecord?.dinner    ?? false
-  const preference = todayRecord?.preference ?? null
-  const anyRecord  = todayRecord != null
-
-  const activePref = DAILY_PREFS.find(p => p.value === preference)
 
   return (
-    <div className="bg-white rounded-2xl px-4 py-4 shadow-sm border border-gray-100">
-      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Mark Today's Attendance</p>
+    <div className="space-y-2">
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1">Mark Today's Attendance</p>
 
       {ownerMarked && (
-        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-3 font-medium">
-          Owner marked: Lunch {lunch ? 'Present' : 'Absent'} · Dinner {dinner ? 'Present' : 'Absent'}
-        </p>
+        <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
+          <p className="text-sm font-semibold text-amber-700">Owner has marked your attendance today</p>
+        </div>
       )}
 
-      {/* ── Daily meal preference ── */}
-      <div className="mb-4">
-        <p className="text-xs font-semibold text-gray-500 mb-2">Today's Meal Preference</p>
-        {prefOpen ? (
-          <div className="flex gap-2">
-            {DAILY_PREFS.map(p => (
-              <button
-                key={p.value}
-                onClick={() => onSetPref(p.value)}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-95 ${
-                  preference === p.value
-                    ? 'bg-black text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {p.emoji} {p.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2.5">
-            <span className="text-sm font-semibold text-gray-700">
-              {activePref ? `${activePref.emoji} ${activePref.label}` : 'Not selected'}
-            </span>
-            <span className="text-[11px] text-gray-400">Locked at 10:00 AM</span>
-          </div>
-        )}
-      </div>
+      <MealBlock
+        key={`lunch-${todayRecord ? 'loaded' : 'empty'}`}
+        meal="lunch"
+        isOpen={lunchOpen}
+        closedAt="6:00 AM"
+        todayRecord={todayRecord}
+        ownerMarked={ownerMarked}
+        onSave={(att, pref) => onSaveMeal('lunch', att, pref)}
+      />
 
-      <div className="border-t border-gray-100 mb-3" />
-
-      {/* ── Attendance buttons ── */}
-      <div className="space-y-3">
-        <MealRow
-          meal="lunch"
-          label="Lunch"
-          isOpen={lunchOpen}
-          closedText="Lunch marking closed at 6:00 AM"
-          marked={anyRecord}
-          isPresent={lunch}
-          onMark={() => onMark('lunch', !lunch)}
-          ownerMarked={ownerMarked}
-        />
-
-        <div className="border-t border-gray-100" />
-
-        <MealRow
-          meal="dinner"
-          label="Dinner"
-          isOpen={dinnerOpen}
-          closedText="Dinner marking closed at 7:00 PM"
-          marked={anyRecord}
-          isPresent={dinner}
-          onMark={() => onMark('dinner', !dinner)}
-          ownerMarked={ownerMarked}
-        />
-      </div>
+      <MealBlock
+        key={`dinner-${todayRecord ? 'loaded' : 'empty'}`}
+        meal="dinner"
+        isOpen={dinnerOpen}
+        closedAt="7:00 PM"
+        todayRecord={todayRecord}
+        ownerMarked={ownerMarked}
+        onSave={(att, pref) => onSaveMeal('dinner', att, pref)}
+      />
     </div>
   )
 }
@@ -447,32 +473,38 @@ export default function CustomerAttendance() {
   const [attendanceMap, setAttendanceMap] = useState({})
   const [todayMenu, setTodayMenu] = useState(undefined) // undefined = loading, null = not found
   const [loading, setLoading] = useState(true)
+  const [toast, setToast] = useState(null)
 
   const today = todayKey()
   const [selectedDate, setSelectedDate] = useState(today)
 
-  async function handleSetPref(pref) {
+  async function handleSaveMeal(meal, attendance, pref) {
     const docId = `${customerId}_${today}`
     const existing = attendanceMap[today] ?? {}
-    const newData = { ...existing, preference: pref, selfMarked: true, customerId, date: today }
-    setAttendanceMap(prev => ({ ...prev, [today]: newData }))
-    try {
-      await setDoc(doc(db, 'attendance', docId), { preference: pref, selfMarked: true, customerId, date: today }, { merge: true })
-    } catch (err) {
-      console.error('Failed to save preference:', err)
-      setAttendanceMap(prev => ({ ...prev, [today]: existing }))
+    const prefField = `${meal}Preference`
+    const newData = {
+      ...existing,
+      [meal]: attendance,
+      [prefField]: pref ?? null,
+      selfMarked: true,
+      customerId,
+      date: today,
     }
-  }
-
-  async function handleSelfMark(meal, value) {
-    const docId = `${customerId}_${today}`
-    const existing = attendanceMap[today] ?? {}
-    const newData = { ...existing, [meal]: value, selfMarked: true, customerId, date: today }
     setAttendanceMap(prev => ({ ...prev, [today]: newData }))
+    setToast('Saved successfully')
+    const timer = setTimeout(() => setToast(null), 2500)
     try {
-      await setDoc(doc(db, 'attendance', docId), { [meal]: value, selfMarked: true, customerId, date: today }, { merge: true })
+      await setDoc(doc(db, 'attendance', docId), {
+        [meal]: attendance,
+        [prefField]: pref ?? null,
+        selfMarked: true,
+        customerId,
+        date: today,
+      }, { merge: true })
     } catch (err) {
-      console.error('Failed to save self attendance:', err)
+      console.error('Failed to save:', err)
+      clearTimeout(timer)
+      setToast(null)
       setAttendanceMap(prev => ({ ...prev, [today]: existing }))
     }
   }
@@ -514,7 +546,8 @@ export default function CustomerAttendance() {
       const aMap = {}
       aSnap.docs.forEach(d => {
         const data = d.data()
-        if (data.date >= start && data.date <= end) {
+        // Always include today so self-attendance section works on any viewed month
+        if ((data.date >= start && data.date <= end) || data.date === today) {
           aMap[data.date] = data
         }
       })
@@ -656,19 +689,20 @@ export default function CustomerAttendance() {
             )}
 
             {/* ── Self attendance ── */}
-            <div>
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1 mb-2">
-                Today
-              </p>
-              <SelfAttendanceSection
-                todayRecord={attendanceMap[today]}
-                onMark={handleSelfMark}
-                onSetPref={handleSetPref}
-              />
-            </div>
+            <SelfAttendanceSection
+              todayRecord={attendanceMap[today]}
+              onSaveMeal={handleSaveMeal}
+            />
           </>
         )}
       </main>
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg pointer-events-none">
+          ✓ {toast}
+        </div>
+      )}
 
       {/* ── Bottom Nav ── */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 flex">

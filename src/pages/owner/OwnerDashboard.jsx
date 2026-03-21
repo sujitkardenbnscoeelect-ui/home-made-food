@@ -77,7 +77,7 @@ function HomeIcon({ active }) {
   )
 }
 
-function UsersIcon({ active }) {
+function UsersIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
@@ -89,7 +89,7 @@ function UsersIcon({ active }) {
   )
 }
 
-function ReceiptIcon({ active }) {
+function ReceiptIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
@@ -303,7 +303,8 @@ function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
   const extraAmount = record?.extraAmount ?? 0
   const hasExtra = extraAmount > 0
   const isSaving = saving
-  const prefEmoji = PREF_EMOJI[record?.preference]
+  const lunchEmoji  = PREF_EMOJI[record?.lunchPreference]
+  const dinnerEmoji = PREF_EMOJI[record?.dinnerPreference]
 
   return (
     <div className="bg-white rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm border border-gray-100">
@@ -316,11 +317,15 @@ function CustomerRow({ customer, record, saving, onToggle, onExtra }) {
 
       {/* Name + rates */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           <p className="text-sm font-semibold text-gray-900 truncate leading-tight">
             {customer.name}
           </p>
-          {prefEmoji && <span className="text-sm leading-none flex-shrink-0">{prefEmoji}</span>}
+          {(lunchEmoji || dinnerEmoji) && (
+            <span className="text-sm leading-none flex-shrink-0 whitespace-nowrap">
+              {lunchEmoji}{dinnerEmoji && lunchEmoji !== dinnerEmoji ? dinnerEmoji : ''}
+            </span>
+          )}
         </div>
         <p className="text-xs text-gray-400 mt-0.5">
           L ₹{customer.lunchRate ?? '—'} · D ₹{customer.dinnerRate ?? '—'}
@@ -499,12 +504,16 @@ export default function OwnerDashboard() {
   }).length
   const absentCount = customers.length - presentCount
 
-  const prefCounts = { veg: 0, nonveg: 0, fasting: 0 }
+  const lunchPref  = { veg: 0, nonveg: 0, fasting: 0 }
+  const dinnerPref = { veg: 0, nonveg: 0, fasting: 0 }
   customers.forEach(c => {
-    const pref = attendance[c.id]?.preference
-    if (pref && prefCounts[pref] !== undefined) prefCounts[pref]++
+    const r = attendance[c.id]
+    if (r?.lunchPreference  && lunchPref[r.lunchPreference]  !== undefined) lunchPref[r.lunchPreference]++
+    if (r?.dinnerPreference && dinnerPref[r.dinnerPreference] !== undefined) dinnerPref[r.dinnerPreference]++
   })
-  const hasPrefData = prefCounts.veg + prefCounts.nonveg + prefCounts.fasting > 0
+  const hasLunchPref  = lunchPref.veg  + lunchPref.nonveg  + lunchPref.fasting  > 0
+  const hasDinnerPref = dinnerPref.veg + dinnerPref.nonveg + dinnerPref.fasting > 0
+  const hasPrefData   = hasLunchPref || hasDinnerPref
 
   // ── render ─────────────────────────────────────────────────────────────────
   return (
@@ -596,11 +605,23 @@ export default function OwnerDashboard() {
           </div>
         </div>
         {hasPrefData && (
-          <div className="flex items-center gap-3 pb-1">
-            <span className="text-[11px] text-gray-400 font-medium">Today's preference:</span>
-            <span className="text-[11px] font-semibold text-gray-700">🌿 Veg {prefCounts.veg}</span>
-            <span className="text-[11px] font-semibold text-gray-700">🍖 Non-Veg {prefCounts.nonveg}</span>
-            <span className="text-[11px] font-semibold text-gray-700">🙏 Fasting {prefCounts.fasting}</span>
+          <div className="flex flex-col gap-0.5 pb-1">
+            {hasLunchPref && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-400 w-10">Lunch:</span>
+                <span className="text-[11px] font-semibold text-gray-700">🌿 {lunchPref.veg}</span>
+                <span className="text-[11px] font-semibold text-gray-700">🍖 {lunchPref.nonveg}</span>
+                <span className="text-[11px] font-semibold text-gray-700">🙏 {lunchPref.fasting}</span>
+              </div>
+            )}
+            {hasDinnerPref && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-400 w-10">Dinner:</span>
+                <span className="text-[11px] font-semibold text-gray-700">🌿 {dinnerPref.veg}</span>
+                <span className="text-[11px] font-semibold text-gray-700">🍖 {dinnerPref.nonveg}</span>
+                <span className="text-[11px] font-semibold text-gray-700">🙏 {dinnerPref.fasting}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
