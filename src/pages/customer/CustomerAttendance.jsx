@@ -18,6 +18,13 @@ function makeKey(year, month, day) {
   return `${year}-${pad(month)}-${pad(day)}`
 }
 
+function formatFullDate(dateStr) {
+  const [yyyy, mm, dd] = dateStr.split('-').map(Number)
+  return new Date(yyyy, mm - 1, dd).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
+}
+
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // ─── icons ────────────────────────────────────────────────────────────────────
@@ -64,22 +71,20 @@ function ChevronRightIcon() {
 
 // ─── Calendar grid ────────────────────────────────────────────────────────────
 
-function CalendarGrid({ year, month, attendanceMap, today }) {
+function CalendarGrid({ year, month, attendanceMap, today, selectedDate, onSelectDate }) {
   const daysInMonth = new Date(year, month, 0).getDate()
-  const firstDayOfWeek = new Date(year, month - 1, 1).getDay() // 0=Sun
+  const firstDayOfWeek = new Date(year, month - 1, 1).getDay()
 
-  // build cells: nulls for leading blanks, then 1..daysInMonth
   const cells = []
   for (let i = 0; i < firstDayOfWeek; i++) cells.push(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-  // pad to complete last row
   while (cells.length % 7 !== 0) cells.push(null)
 
   function getDayState(day) {
     if (!day) return 'empty'
     const key = makeKey(year, month, day)
-    if (key === today) return 'today'
     if (key > today) return 'future'
+    if (key === today) return 'today'
     const record = attendanceMap[key]
     if (record && (record.lunch || record.dinner)) return 'present'
     return 'absent'
@@ -90,31 +95,41 @@ function CalendarGrid({ year, month, attendanceMap, today }) {
       {/* Day headers */}
       <div className="grid grid-cols-7 mb-1">
         {DAY_LABELS.map(d => (
-          <div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">
-            {d}
-          </div>
+          <div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">{d}</div>
         ))}
       </div>
 
       {/* Day cells */}
       <div className="grid grid-cols-7 gap-y-1">
         {cells.map((day, idx) => {
+          if (!day) return <div key={idx} className="h-9" />
+
+          const key = makeKey(year, month, day)
           const state = getDayState(day)
+          const isSelected = key === selectedDate
+          const isTappable = state !== 'future'
+
+          // Base circle styles per state
+          let circleClass = 'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all'
+          if (state === 'present')       circleClass += ' bg-black text-white'
+          else if (state === 'today')    circleClass += ' bg-white border-2 border-black text-black'
+          else if (state === 'absent')   circleClass += ' bg-gray-100 text-gray-400'
+          else                           circleClass += ' text-gray-200'
+
+          // Selected ring wraps the circle
+          const wrapClass = isSelected
+            ? 'ring-2 ring-black ring-offset-1 rounded-full'
+            : ''
+
           return (
             <div key={idx} className="flex items-center justify-center h-9">
-              {day && state !== 'empty' ? (
-                <div className={`
-                  w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold
-                  ${state === 'present' ? 'bg-black text-white' : ''}
-                  ${state === 'absent' ? 'bg-gray-100 text-gray-400' : ''}
-                  ${state === 'today' ? 'bg-white border-2 border-black text-black' : ''}
-                  ${state === 'future' ? 'text-gray-300' : ''}
-                `}>
-                  {day}
-                </div>
-              ) : (
-                <span />
-              )}
+              <button
+                disabled={!isTappable}
+                onClick={() => isTappable && onSelectDate(key)}
+                className={`${wrapClass} focus:outline-none active:scale-90 transition-transform ${isTappable ? 'cursor-pointer' : 'cursor-default'}`}
+              >
+                <div className={circleClass}>{day}</div>
+              </button>
             </div>
           )
         })}
@@ -123,44 +138,73 @@ function CalendarGrid({ year, month, attendanceMap, today }) {
   )
 }
 
-// ─── Today's meal card ────────────────────────────────────────────────────────
+// ─── Selected day detail card ─────────────────────────────────────────────────
 
-function TodayCard({ record }) {
-  const lunch = record?.lunch ?? false
-  const dinner = record?.dinner ?? false
-  const extraAmount = record?.extraAmount ?? 0
+function SelectedDayCard({ dateStr, record, customer }) {
+  if (!dateStr) return null
 
-  if (!lunch && !dinner) {
+  const fullDate = formatFullDate(dateStr)
+  const isFuture = dateStr > todayKey()
+
+  if (isFuture) {
     return (
-      <div className="bg-gray-100 rounded-2xl px-5 py-4 text-center">
-        <p className="text-sm font-semibold text-gray-400">No meals marked today</p>
-        <p className="text-xs text-gray-400 mt-0.5">Check back after the owner marks attendance</p>
+      <div className="bg-gray-100 rounded-2xl px-5 py-5 text-center">
+        <p className="text-xs text-gray-400 font-medium mb-1">{fullDate}</p>
+        <p className="text-sm font-semibold text-gray-400">Not yet marked</p>
       </div>
     )
   }
 
+  const lunch = record?.lunch ?? false
+  const dinner = record?.dinner ?? false
+  const extraAmount = record?.extraAmount ?? 0
+  const isAbsent = !lunch && !dinner && !extraAmount
+
+  if (isAbsent) {
+    return (
+      <div className="bg-gray-100 rounded-2xl px-5 py-5 text-center">
+        <p className="text-xs text-gray-400 font-medium mb-1">{fullDate}</p>
+        <p className="text-sm font-semibold text-gray-500">Absent</p>
+        <p className="text-xs text-gray-400 mt-0.5">No meals marked for this day</p>
+      </div>
+    )
+  }
+
+  const dayTotal =
+    (lunch  ? (customer?.lunchRate  ?? 0) : 0) +
+    (dinner ? (customer?.dinnerRate ?? 0) : 0) +
+    extraAmount
+
   return (
     <div className="bg-black rounded-2xl px-5 py-4">
-      <p className="text-gray-400 text-xs mb-3 uppercase tracking-wide font-medium">Today's Meals</p>
-      <div className="flex gap-3">
-        <div className={`flex-1 rounded-xl px-4 py-3 text-center ${lunch ? 'bg-white' : 'bg-white/10'}`}>
-          <p className={`text-xs font-semibold ${lunch ? 'text-black' : 'text-gray-500'}`}>Lunch</p>
-          <p className={`text-lg font-bold mt-0.5 ${lunch ? 'text-black' : 'text-gray-600'}`}>
-            {lunch ? '\u2713' : '\u2014'}
+      <p className="text-gray-400 text-xs font-medium mb-3">{fullDate}</p>
+      <div className="flex gap-2 mb-3">
+        {/* Lunch */}
+        <div className={`flex-1 rounded-xl px-3 py-2.5 text-center ${lunch ? 'bg-white' : 'bg-white/10'}`}>
+          <p className={`text-[11px] font-semibold ${lunch ? 'text-black' : 'text-gray-500'}`}>Lunch</p>
+          <p className={`text-base font-bold mt-0.5 ${lunch ? 'text-black' : 'text-gray-600'}`}>
+            {lunch ? '\u2713' : '\u2715'}
           </p>
         </div>
-        <div className={`flex-1 rounded-xl px-4 py-3 text-center ${dinner ? 'bg-white' : 'bg-white/10'}`}>
-          <p className={`text-xs font-semibold ${dinner ? 'text-black' : 'text-gray-500'}`}>Dinner</p>
-          <p className={`text-lg font-bold mt-0.5 ${dinner ? 'text-black' : 'text-gray-600'}`}>
-            {dinner ? '\u2713' : '\u2014'}
+        {/* Dinner */}
+        <div className={`flex-1 rounded-xl px-3 py-2.5 text-center ${dinner ? 'bg-white' : 'bg-white/10'}`}>
+          <p className={`text-[11px] font-semibold ${dinner ? 'text-black' : 'text-gray-500'}`}>Dinner</p>
+          <p className={`text-base font-bold mt-0.5 ${dinner ? 'text-black' : 'text-gray-600'}`}>
+            {dinner ? '\u2713' : '\u2715'}
           </p>
         </div>
-        {extraAmount > 0 && (
-          <div className="flex-1 rounded-xl px-4 py-3 text-center bg-white/10">
-            <p className="text-xs font-semibold text-gray-400">Extra</p>
-            <p className="text-sm font-bold mt-0.5 text-white">Rs.{extraAmount}</p>
-          </div>
-        )}
+        {/* Extra */}
+        <div className="flex-1 rounded-xl px-3 py-2.5 text-center bg-white/10">
+          <p className="text-[11px] font-semibold text-gray-400">Extra</p>
+          <p className="text-xs font-bold mt-0.5 text-white">
+            {extraAmount > 0 ? `Rs.${extraAmount}` : 'None'}
+          </p>
+        </div>
+      </div>
+      {/* Day total */}
+      <div className="flex items-center justify-between pt-2.5 border-t border-white/10">
+        <p className="text-xs text-gray-400">Day total</p>
+        <p className="text-sm font-bold text-white">Rs.{dayTotal}</p>
       </div>
     </div>
   )
@@ -174,14 +218,18 @@ export default function CustomerAttendance() {
   const customerId = userData?.customerId
 
   const now = new Date()
-  const [year, setYear] = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth() + 1)
+  const todayYear = now.getFullYear()
+  const todayMonth = now.getMonth() + 1
 
-  const [customerName, setCustomerName] = useState('')
-  const [attendanceMap, setAttendanceMap] = useState({}) // { 'YYYY-MM-DD': record }
+  const [year, setYear] = useState(todayYear)
+  const [month, setMonth] = useState(todayMonth)
+
+  const [customer, setCustomer] = useState(null)
+  const [attendanceMap, setAttendanceMap] = useState({})
   const [loading, setLoading] = useState(true)
 
   const today = todayKey()
+  const [selectedDate, setSelectedDate] = useState(today)
 
   const fetchData = useCallback(async () => {
     if (!customerId) {
@@ -190,10 +238,10 @@ export default function CustomerAttendance() {
     }
     setLoading(true)
     try {
-      // Fetch customer name once
-      if (!customerName) {
+      // Fetch customer profile once
+      if (!customer) {
         const cSnap = await getDoc(doc(db, 'customers', customerId))
-        if (cSnap.exists()) setCustomerName(cSnap.data().name ?? '')
+        if (cSnap.exists()) setCustomer({ id: cSnap.id, ...cSnap.data() })
       }
 
       // Query by customerId only — avoids needing a composite Firestore index.
@@ -219,14 +267,12 @@ export default function CustomerAttendance() {
     } finally {
       setLoading(false)
     }
-  }, [customerId, year, month, customerName])
+  }, [customerId, year, month, customer])
 
   useEffect(() => { fetchData() }, [fetchData])
 
   // ── stats ──────────────────────────────────────────────────────────────────
   const daysInMonth = new Date(year, month, 0).getDate()
-  const todayYear = now.getFullYear()
-  const todayMonth = now.getMonth() + 1
   const todayDay = now.getDate()
   const pastDays = (year === todayYear && month === todayMonth)
     ? todayDay
@@ -243,16 +289,17 @@ export default function CustomerAttendance() {
 
   // ── month nav ──────────────────────────────────────────────────────────────
   function prevMonth() {
-    if (month === 1) { setYear(y => y - 1); setMonth(12) }
-    else setMonth(m => m - 1)
+    const newYear  = month === 1 ? year - 1 : year
+    const newMonth = month === 1 ? 12 : month - 1
+    setYear(newYear); setMonth(newMonth)
+    setSelectedDate(newYear === todayYear && newMonth === todayMonth ? today : null)
   }
   function nextMonth() {
-    if (month === 12) { setYear(y => y + 1); setMonth(1) }
-    else setMonth(m => m + 1)
+    const newYear  = month === 12 ? year + 1 : year
+    const newMonth = month === 12 ? 1 : month + 1
+    setYear(newYear); setMonth(newMonth)
+    setSelectedDate(newYear === todayYear && newMonth === todayMonth ? today : null)
   }
-
-  const isCurrentMonth = year === todayYear && month === todayMonth
-  const todayRecord = attendanceMap[today]
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col max-w-md mx-auto" style={{ fontFamily: "'DM Sans', sans-serif" }}>
@@ -265,7 +312,7 @@ export default function CustomerAttendance() {
           </div>
           <div>
             <h1 className="text-white text-lg font-bold leading-tight m-0">Attendance</h1>
-            <p className="text-gray-400 text-xs mt-0.5">{customerName || '—'}</p>
+            <p className="text-gray-400 text-xs mt-0.5">{customer?.name || '—'}</p>
           </div>
         </div>
       </header>
@@ -311,23 +358,30 @@ export default function CustomerAttendance() {
                 month={month}
                 attendanceMap={attendanceMap}
                 today={today}
+                selectedDate={selectedDate}
+                onSelectDate={setSelectedDate}
               />
 
               {/* Legend */}
-              <div className="flex items-center gap-4 mt-4 pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-3 flex-wrap mt-4 pt-3 border-t border-gray-100">
                 <LegendItem color="bg-black" label="Present" />
                 <LegendItem color="bg-gray-100 border border-gray-200" label="Absent" />
                 <LegendItem color="bg-white border-2 border-black" label="Today" />
+                <LegendItem color="bg-white ring-2 ring-black" label="Selected" />
               </div>
             </div>
 
-            {/* ── Today's meal card (only for current month) ── */}
-            {isCurrentMonth && (
+            {/* ── Selected day detail ── */}
+            {selectedDate && (
               <div>
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1 mb-2">
-                  Today
+                  Selected Day
                 </p>
-                <TodayCard record={todayRecord} />
+                <SelectedDayCard
+                  dateStr={selectedDate}
+                  record={attendanceMap[selectedDate]}
+                  customer={customer}
+                />
               </div>
             )}
           </>
