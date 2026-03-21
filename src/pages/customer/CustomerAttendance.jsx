@@ -128,7 +128,7 @@ function CalendarGrid({ year, month, attendanceMap, today }) {
 function TodayCard({ record }) {
   const lunch = record?.lunch ?? false
   const dinner = record?.dinner ?? false
-  const hasExtra = (record?.extraLunch ?? 0) > 0 || (record?.extraDinner ?? 0) > 0
+  const extraAmount = record?.extraAmount ?? 0
 
   if (!lunch && !dinner) {
     return (
@@ -146,21 +146,19 @@ function TodayCard({ record }) {
         <div className={`flex-1 rounded-xl px-4 py-3 text-center ${lunch ? 'bg-white' : 'bg-white/10'}`}>
           <p className={`text-xs font-semibold ${lunch ? 'text-black' : 'text-gray-500'}`}>Lunch</p>
           <p className={`text-lg font-bold mt-0.5 ${lunch ? 'text-black' : 'text-gray-600'}`}>
-            {lunch ? '✓' : '—'}
+            {lunch ? '\u2713' : '\u2014'}
           </p>
         </div>
         <div className={`flex-1 rounded-xl px-4 py-3 text-center ${dinner ? 'bg-white' : 'bg-white/10'}`}>
           <p className={`text-xs font-semibold ${dinner ? 'text-black' : 'text-gray-500'}`}>Dinner</p>
           <p className={`text-lg font-bold mt-0.5 ${dinner ? 'text-black' : 'text-gray-600'}`}>
-            {dinner ? '✓' : '—'}
+            {dinner ? '\u2713' : '\u2014'}
           </p>
         </div>
-        {hasExtra && (
+        {extraAmount > 0 && (
           <div className="flex-1 rounded-xl px-4 py-3 text-center bg-white/10">
             <p className="text-xs font-semibold text-gray-400">Extra</p>
-            <p className="text-lg font-bold mt-0.5 text-white">
-              +{(record.extraLunch ?? 0) + (record.extraDinner ?? 0)}
-            </p>
+            <p className="text-sm font-bold mt-0.5 text-white">Rs.{extraAmount}</p>
           </div>
         )}
       </div>
@@ -192,23 +190,32 @@ export default function CustomerAttendance() {
     }
     setLoading(true)
     try {
-      // customer name (only needed once, but safe to re-fetch)
+      // Fetch customer name once
       if (!customerName) {
         const cSnap = await getDoc(doc(db, 'customers', customerId))
         if (cSnap.exists()) setCustomerName(cSnap.data().name ?? '')
       }
 
-      const { start, end } = getMonthBounds(year, month)
+      // Query by customerId only — avoids needing a composite Firestore index.
+      // Date filtering is done in JS below.
       const aSnap = await getDocs(
-        query(collection(db, 'attendance'),
-          where('customerId', '==', customerId),
-          where('date', '>=', start),
-          where('date', '<=', end)
-        )
+        query(collection(db, 'attendance'), where('customerId', '==', customerId))
       )
+
+      console.log('customerId:', customerId)
+      console.log('attendance records found:', aSnap.size)
+
+      const { start, end } = getMonthBounds(year, month)
       const aMap = {}
-      aSnap.docs.forEach(d => { aMap[d.data().date] = d.data() })
+      aSnap.docs.forEach(d => {
+        const data = d.data()
+        if (data.date >= start && data.date <= end) {
+          aMap[data.date] = data
+        }
+      })
       setAttendanceMap(aMap)
+    } catch (err) {
+      console.error('Failed to fetch attendance:', err)
     } finally {
       setLoading(false)
     }
