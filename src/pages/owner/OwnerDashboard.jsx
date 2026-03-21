@@ -37,7 +37,6 @@ function formatDisplayDate(dateStr) {
   const [yyyy, mm, dd] = dateStr.split('-').map(Number)
   const d = new Date(yyyy, mm - 1, dd)
   return d.toLocaleDateString('en-GB', {
-    weekday: 'short',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -558,6 +557,9 @@ export default function OwnerDashboard() {
           </button>
 
           <div className="flex-1 text-center">
+            {isToday && (
+              <p className="text-gray-400 text-[11px] font-semibold uppercase tracking-wide leading-none mb-0.5">Today</p>
+            )}
             <p className="text-white text-sm font-semibold leading-tight">{displayDate}</p>
           </div>
 
