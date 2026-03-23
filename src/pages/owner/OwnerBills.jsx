@@ -465,11 +465,16 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
 // ─── Weekly Bill Card ─────────────────────────────────────────────────────────
 
 function WeeklyBillCard({ customer, weeks, undoKeys, onMarkPaid, onUndo, onForceUnpaid, onHistory }) {
-  const totalAmount = weeks.reduce((s, w) => s + w.billData.total, 0)
-  const unpaidCount = weeks.filter(w => !w.paid && w.billData.total > 0).length
+  const [showHistory, setShowHistory] = useState(false)
+
+  const unpaidWeeks = weeks.filter(w => !w.paid)
+  const paidWeeks   = weeks.filter(w => w.paid)
+  const balanceDue  = unpaidWeeks.reduce((s, w) => s + w.billData.total, 0)
+  const unpaidCount = unpaidWeeks.filter(w => w.billData.total > 0).length
 
   return (
     <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100">
+      {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="w-10 h-10 rounded-full bg-black flex-shrink-0 flex items-center justify-center">
           <span className="text-white text-sm font-bold uppercase">{customer.name?.charAt(0) ?? '?'}</span>
@@ -484,26 +489,69 @@ function WeeklyBillCard({ customer, weeks, undoKeys, onMarkPaid, onUndo, onForce
           </p>
         </div>
         <div className="flex-shrink-0 text-right">
-          <p className="text-base font-bold text-gray-900">₹{totalAmount}</p>
-          <button onClick={onHistory} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5 block">History</button>
+          <p className="text-base font-bold text-gray-900">₹{balanceDue}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">balance due</p>
         </div>
       </div>
 
-      <div className="space-y-2 border-t border-gray-100 pt-3">
-        {weeks.map(week => {
-          const hasUndo = undoKeys.has(week.docId)
-          return (
+      {/* Active (unpaid) weeks */}
+      {unpaidWeeks.length > 0 && (
+        <div className="space-y-2 border-t border-gray-100 pt-3">
+          {unpaidWeeks.map(week => (
             <WeekRow
               key={week.num}
               week={week}
-              hasUndo={hasUndo}
+              hasUndo={undoKeys.has(week.docId)}
               onMarkPaid={() => onMarkPaid(week)}
               onUndo={() => onUndo(week)}
               onForceUnpaid={() => onForceUnpaid(week)}
             />
-          )
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {/* Paid weeks history */}
+      {paidWeeks.length > 0 && (
+        <div className={`border-t border-gray-100 pt-2 mt-2`}>
+          <button
+            onClick={() => setShowHistory(v => !v)}
+            className="w-full flex items-center justify-between text-xs text-gray-400 hover:text-gray-600 py-1 transition"
+          >
+            <span>
+              {paidWeeks.length} week{paidWeeks.length !== 1 ? 's' : ''} paid ·{' '}
+              ₹{paidWeeks.reduce((s, w) => s + w.billData.total, 0)}
+            </span>
+            <span className="font-semibold">{showHistory ? '▲ Hide' : '▼ History'}</span>
+          </button>
+          {showHistory && (
+            <div className="mt-1.5 space-y-1.5">
+              {paidWeeks.map(week => (
+                <div key={week.num}
+                  className="bg-green-50 rounded-xl px-3 py-2.5 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-green-800">{week.label}</p>
+                    {week.paidAt && (
+                      <p className="text-[10px] text-green-600 mt-0.5">
+                        Paid {new Date(week.paidAt).toLocaleDateString('en-GB')} ✓
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-xs font-bold text-green-700">₹{week.billData.total}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* All paid — link to full history */}
+      {unpaidWeeks.length === 0 && paidWeeks.length > 0 && !showHistory && (
+        <div className="mt-1 text-center">
+          <button onClick={onHistory} className="text-xs text-gray-400 hover:text-gray-600">
+            View full payment history
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -587,11 +635,19 @@ function FlexibleBillCard({ customer, billData, payments, onAddPayment, onHistor
       {/* Balance summary */}
       <div className="bg-gray-50 rounded-xl px-3 py-3 mb-3">
         <div className="flex items-center justify-between mb-1.5">
-          <p className="text-xs text-gray-500">Total Bill</p>
+          <div>
+            <p className="text-xs text-gray-500">Attendance Total</p>
+            {(lunchDays > 0 || dinnerDays > 0) && (
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                {lunchDays > 0 ? `${lunchDays}L` : ''}{lunchDays > 0 && dinnerDays > 0 ? ' · ' : ''}{dinnerDays > 0 ? `${dinnerDays}D` : ''}
+                {extraAmount > 0 ? ` · ₹${extraAmount} extra` : ''}
+              </p>
+            )}
+          </div>
           <p className="text-sm font-bold text-gray-900">₹{total}</p>
         </div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-xs text-gray-500">Total Paid</p>
+          <p className="text-xs text-gray-500">Total Paid ({payments.length} payment{payments.length !== 1 ? 's' : ''})</p>
           <p className="text-sm font-semibold text-green-600">−₹{totalPaid}</p>
         </div>
         <div className="border-t border-gray-200 pt-2 flex items-center justify-between">
@@ -701,11 +757,13 @@ export default function OwnerBills() {
           const weekData = await Promise.all(weeks.map(async week => {
             const docId = `${customer.id}_${mk}_w${week.num}`
             const snap = await getDoc(doc(db, 'bills', docId))
+            const snapData = snap.exists() ? snap.data() : {}
             return {
               ...week,
               label: weekLabel(week, month),
               billData: calcBill(customer, filterWeekDocs(customerDocs, week)),
-              paid: snap.exists() ? (snap.data().paid ?? false) : false,
+              paid: snapData.paid ?? false,
+              paidAt: snapData.paidAt ?? null,
               docId,
             }
           }))
