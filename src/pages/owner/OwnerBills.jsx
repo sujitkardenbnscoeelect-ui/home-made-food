@@ -8,18 +8,48 @@ import {
   doc,
   setDoc,
   getDoc,
+  addDoc,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import {
   MONTH_NAMES,
-  MONTH_SHORT,
   getMonthBounds,
   calcBill,
   generateBillPDF,
 } from '../../lib/generateBill'
 
-function todayDayOfMonth() {
-  return new Date().getDate()
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function pad(n) { return String(n).padStart(2, '0') }
+function mKey(year, month) { return `${year}-${pad(month)}` }
+
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function getWeeks(year, month) {
+  const last = new Date(year, month, 0).getDate()
+  const weeks = [
+    { num: 1, start: 1,  end: 7  },
+    { num: 2, start: 8,  end: 14 },
+    { num: 3, start: 15, end: 21 },
+    { num: 4, start: 22, end: 28 },
+  ]
+  if (last > 28) weeks.push({ num: 5, start: 29, end: last })
+  return weeks
+}
+
+function weekLabel(week, month) {
+  const m = MONTH_NAMES[month - 1].slice(0, 3)
+  return `${m} ${week.start}–${week.end}`
+}
+
+function filterWeekDocs(allDocs, week) {
+  return allDocs.filter(d => {
+    const day = parseInt(d.date.split('-')[2], 10)
+    return day >= week.start && day <= week.end
+  })
 }
 
 // ─── icons ────────────────────────────────────────────────────────────────────
@@ -95,12 +125,27 @@ function ChevronRightIcon() {
     </svg>
   )
 }
+function PlusIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+      <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  )
+}
+function XIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
 
-// ─── Month Picker Modal ───────────────────────────────────────────────────────
+// ─── Month Picker ─────────────────────────────────────────────────────────────
 
 function MonthPicker({ year, month, onChange, onClose }) {
   const [y, setY] = useState(year)
-
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
       <div className="w-full max-w-md bg-white rounded-t-2xl px-5 pt-4 pb-8 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -114,13 +159,8 @@ function MonthPicker({ year, month, onChange, onClose }) {
           {MONTH_NAMES.map((name, i) => {
             const active = y === year && (i + 1) === month
             return (
-              <button
-                key={name}
-                onClick={() => { onChange(y, i + 1); onClose() }}
-                className={`py-2.5 rounded-xl text-sm font-semibold transition ${
-                  active ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
+              <button key={name} onClick={() => { onChange(y, i + 1); onClose() }}
+                className={`py-2.5 rounded-xl text-sm font-semibold transition ${active ? 'bg-black text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                 {name.slice(0, 3)}
               </button>
             )
@@ -131,9 +171,210 @@ function MonthPicker({ year, month, onChange, onClose }) {
   )
 }
 
-// ─── Bill Card ────────────────────────────────────────────────────────────────
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
 
-function BillCard({ customer, billData, paid, onPDF, onWhatsApp, onMarkPaid }) {
+function ConfirmModal({ title, message, confirmLabel = 'Confirm', onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onCancel}>
+      <div className="w-full max-w-sm bg-white rounded-2xl p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-gray-900 mb-2">{title}</h3>
+        <p className="text-sm text-gray-500 mb-5">{message}</p>
+        <div className="flex gap-2">
+          <button onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition">
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-xl bg-black text-white text-sm font-semibold hover:bg-gray-800 transition">
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Payment Modal (flexible) ─────────────────────────────────────────────────
+
+function PaymentModal({ customer, onSave, onClose }) {
+  const [amount, setAmount] = useState('')
+  const [date, setDate]     = useState(todayStr())
+  const [note, setNote]     = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  async function handleSave() {
+    const amt = Number(amount)
+    if (!amount || isNaN(amt) || amt <= 0) { setError('Enter a valid amount'); return }
+    setSaving(true)
+    try {
+      await onSave({ amount: amt, date, note: note.trim() })
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-black transition'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-t-2xl px-5 pt-4 pb-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
+        <h3 className="text-base font-bold text-gray-900 mb-0.5">Record Payment</h3>
+        <p className="text-sm text-gray-400 mb-5">{customer.name}</p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Amount Received *</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-medium">₹</span>
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
+                placeholder="0" className={`${inputCls} pl-7`} autoFocus />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Date</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Note (optional)</label>
+            <input type="text" value={note} onChange={e => setNote(e.target.value)}
+              placeholder="e.g. Paid via UPI" className={inputCls} />
+          </div>
+          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
+        </div>
+
+        <button onClick={handleSave} disabled={saving}
+          className="mt-5 w-full bg-black text-white rounded-xl py-3.5 text-sm font-semibold hover:bg-gray-900 active:bg-gray-800 transition disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save Payment'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── History Sheet ────────────────────────────────────────────────────────────
+
+function HistorySheet({ customer, paymentType, onClose }) {
+  const [loading, setLoading] = useState(true)
+  const [items, setItems] = useState([])
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      try {
+        if (paymentType === 'flexible') {
+          const snap = await getDocs(
+            query(collection(db, 'payments'), where('customerId', '==', customer.id))
+          )
+          const sorted = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => b.date.localeCompare(a.date))
+          setItems(sorted)
+        } else {
+          // monthly + weekly: query bills collection
+          const snap = await getDocs(
+            query(collection(db, 'bills'), where('customerId', '==', customer.id), where('paid', '==', true))
+          )
+          const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          if (paymentType === 'weekly') {
+            setItems(all.filter(b => b.weekNum != null).sort((a, b) => b.paidAt > a.paidAt ? 1 : -1))
+          } else {
+            setItems(all.filter(b => b.weekNum == null).sort((a, b) => b.paidAt > a.paidAt ? 1 : -1))
+          }
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [customer.id, paymentType])
+
+  const totalPaid = paymentType === 'flexible'
+    ? items.reduce((s, p) => s + p.amount, 0)
+    : null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-t-2xl flex flex-col max-h-[80vh] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex-shrink-0 px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-3" />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-base font-bold text-gray-900">{customer.name}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Payment History</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+              <XIcon />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : items.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">No payment history yet</p>
+          ) : paymentType === 'flexible' ? (
+            <div className="space-y-1">
+              {items.map(p => (
+                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">₹{p.amount}</p>
+                    {p.note && <p className="text-xs text-gray-400 mt-0.5">{p.note}</p>}
+                  </div>
+                  <p className="text-xs text-gray-400">{p.date}</p>
+                </div>
+              ))}
+              <div className="pt-3 flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700">Total Paid</p>
+                <p className="text-sm font-bold text-green-600">₹{totalPaid}</p>
+              </div>
+            </div>
+          ) : paymentType === 'weekly' ? (
+            <div className="space-y-1">
+              {items.map(b => (
+                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-gray-50">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {MONTH_NAMES[(b.month ?? 1) - 1]} {b.year} · Week {b.weekNum}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {b.paidAt ? new Date(b.paidAt).toLocaleDateString('en-GB') : '—'}
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md">PAID</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {items.map(b => (
+                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-gray-50">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {MONTH_NAMES[(b.month ?? 1) - 1]} {b.year}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {b.paidAt ? new Date(b.paidAt).toLocaleDateString('en-GB') : '—'}
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md">PAID</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Monthly Bill Card ─────────────────────────────────────────────────────────
+
+function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onUndo, onForceUnpaid, onPDF, onWhatsApp, onHistory }) {
   const { lunchDays, dinnerDays, extraAmount, total } = billData
   const longPressTimer = useRef(null)
 
@@ -143,32 +384,20 @@ function BillCard({ customer, billData, paid, onPDF, onWhatsApp, onMarkPaid }) {
   if (extraAmount) summaryParts.push(`₹${extraAmount} extra`)
 
   function startLongPress() {
-    longPressTimer.current = setTimeout(() => {
-      if (!paid) onMarkPaid()
-    }, 600)
+    if (!paid) return
+    longPressTimer.current = setTimeout(() => onForceUnpaid(), 600)
   }
-  function cancelLongPress() {
-    clearTimeout(longPressTimer.current)
-  }
+  function cancelLongPress() { clearTimeout(longPressTimer.current) }
 
   return (
-    <div
-      className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100 select-none"
-      onMouseDown={startLongPress}
-      onMouseUp={cancelLongPress}
-      onMouseLeave={cancelLongPress}
-      onTouchStart={startLongPress}
-      onTouchEnd={cancelLongPress}
-    >
-      <div className="flex items-center gap-3">
-        {/* Avatar */}
-        <div className="w-10 h-10 rounded-full bg-black flex-shrink-0 flex items-center justify-center">
-          <span className="text-white text-sm font-bold uppercase">
-            {customer.name?.charAt(0) ?? '?'}
-          </span>
-        </div>
+    <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100 select-none"
+      onMouseDown={startLongPress} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+      onTouchStart={startLongPress} onTouchEnd={cancelLongPress}>
 
-        {/* Info */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-black flex-shrink-0 flex items-center justify-center">
+          <span className="text-white text-sm font-bold uppercase">{customer.name?.charAt(0) ?? '?'}</span>
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-gray-900 truncate">{customer.name}</p>
@@ -182,53 +411,216 @@ function BillCard({ customer, billData, paid, onPDF, onWhatsApp, onMarkPaid }) {
             {summaryParts.length ? summaryParts.join(' · ') : 'No meals this month'}
           </p>
         </div>
-
-        {/* Amount */}
         <div className="flex-shrink-0 text-right">
           <p className="text-base font-bold text-gray-900">₹{total}</p>
+          <button onClick={onHistory} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5 block">History</button>
         </div>
       </div>
 
-      {/* Action buttons */}
+      {undoActive && (
+        <div className="mt-2 flex items-center justify-between bg-green-50 rounded-xl px-3 py-2 border border-green-100">
+          <p className="text-xs font-semibold text-green-700">Marked as paid ✓</p>
+          <button onClick={onUndo} className="text-xs font-bold text-green-700 underline">Undo</button>
+        </div>
+      )}
+
+      {paid && !undoActive && (
+        <p className="text-[10px] text-gray-300 text-center mt-2">Hold to reverse payment</p>
+      )}
+
       {total > 0 && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
           {!paid ? (
             <>
-              <button
-                onClick={onWhatsApp}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl py-2 text-xs font-semibold transition"
-              >
-                <WhatsAppIcon />
-                WhatsApp
+              <button onClick={onWhatsApp}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl py-2 text-xs font-semibold transition">
+                <WhatsAppIcon /> WhatsApp
               </button>
-              <button
-                onClick={onMarkPaid}
-                className="flex items-center justify-center gap-1.5 bg-gray-900 hover:bg-black text-white rounded-xl px-4 py-2 text-xs font-semibold transition"
-              >
+              <button onClick={onMarkPaid}
+                className="flex items-center justify-center gap-1.5 bg-gray-900 hover:bg-black text-white rounded-xl px-4 py-2 text-xs font-semibold transition">
                 Mark Paid
               </button>
-              <button
-                onClick={onPDF}
-                className="flex items-center justify-center gap-1.5 border border-gray-200 text-gray-500 rounded-xl px-3 py-2 text-xs font-semibold hover:bg-gray-50 transition"
-              >
+              <button onClick={onPDF}
+                className="flex items-center justify-center border border-gray-200 text-gray-500 rounded-xl px-3 py-2 text-xs font-semibold hover:bg-gray-50 transition">
                 <PdfIcon />
               </button>
             </>
           ) : (
-            <button
-              onClick={onPDF}
-              className="flex items-center justify-center gap-1.5 border border-gray-200 text-gray-500 rounded-xl px-4 py-2 text-xs font-semibold hover:bg-gray-50 transition"
-            >
-              <PdfIcon />
-              Download PDF
+            <button onClick={onPDF}
+              className="flex items-center justify-center gap-1.5 border border-gray-200 text-gray-500 rounded-xl px-4 py-2 text-xs font-semibold hover:bg-gray-50 transition">
+              <PdfIcon /> Download PDF
             </button>
           )}
         </div>
       )}
+    </div>
+  )
+}
 
-      {!paid && total > 0 && (
-        <p className="text-[10px] text-gray-300 text-center mt-2">Hold to mark as paid</p>
+// ─── Weekly Bill Card ─────────────────────────────────────────────────────────
+
+function WeeklyBillCard({ customer, weeks, undoKeys, onMarkPaid, onUndo, onForceUnpaid, onHistory }) {
+  const totalAmount = weeks.reduce((s, w) => s + w.billData.total, 0)
+  const unpaidCount = weeks.filter(w => !w.paid && w.billData.total > 0).length
+
+  return (
+    <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-10 h-10 rounded-full bg-black flex-shrink-0 flex items-center justify-center">
+          <span className="text-white text-sm font-bold uppercase">{customer.name?.charAt(0) ?? '?'}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-gray-900">{customer.name}</p>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700">WEEKLY</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {unpaidCount > 0 ? `${unpaidCount} week${unpaidCount !== 1 ? 's' : ''} unpaid` : 'All weeks paid'}
+          </p>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <p className="text-base font-bold text-gray-900">₹{totalAmount}</p>
+          <button onClick={onHistory} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5 block">History</button>
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-gray-100 pt-3">
+        {weeks.map(week => {
+          const hasUndo = undoKeys.has(week.docId)
+          return (
+            <WeekRow
+              key={week.num}
+              week={week}
+              hasUndo={hasUndo}
+              onMarkPaid={() => onMarkPaid(week)}
+              onUndo={() => onUndo(week)}
+              onForceUnpaid={() => onForceUnpaid(week)}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function WeekRow({ week, hasUndo, onMarkPaid, onUndo, onForceUnpaid }) {
+  const longPressTimer = useRef(null)
+
+  function startLongPress() {
+    if (!week.paid) return
+    longPressTimer.current = setTimeout(() => onForceUnpaid(), 600)
+  }
+  function cancelLongPress() { clearTimeout(longPressTimer.current) }
+
+  return (
+    <div className={`rounded-xl px-3 py-2.5 select-none ${week.paid ? 'bg-gray-50' : 'bg-white border border-gray-200'}`}
+      onMouseDown={startLongPress} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+      onTouchStart={startLongPress} onTouchEnd={cancelLongPress}>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-gray-700">{week.label}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {week.billData.lunchDays > 0 ? `${week.billData.lunchDays}L ` : ''}
+            {week.billData.dinnerDays > 0 ? `${week.billData.dinnerDays}D` : ''}
+            {week.billData.lunchDays === 0 && week.billData.dinnerDays === 0 ? 'No meals' : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-bold text-gray-900">₹{week.billData.total}</p>
+          {week.paid ? (
+            <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md">PAID</span>
+          ) : week.billData.total > 0 ? (
+            <button onClick={onMarkPaid}
+              className="text-[11px] font-bold bg-black text-white rounded-lg px-2.5 py-1 hover:bg-gray-800 transition">
+              Mark Paid
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {hasUndo && (
+        <div className="mt-1.5 flex items-center justify-between bg-green-50 rounded-lg px-2 py-1.5">
+          <p className="text-[11px] font-semibold text-green-700">Marked as paid ✓</p>
+          <button onClick={onUndo} className="text-[11px] font-bold text-green-700 underline">Undo</button>
+        </div>
       )}
+    </div>
+  )
+}
+
+// ─── Flexible Bill Card ───────────────────────────────────────────────────────
+
+function FlexibleBillCard({ customer, billData, payments, onAddPayment, onHistory }) {
+  const { lunchDays, dinnerDays, extraAmount, total } = billData
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  const balance = total - totalPaid
+
+  const summaryParts = []
+  if (lunchDays) summaryParts.push(`${lunchDays}L`)
+  if (dinnerDays) summaryParts.push(`${dinnerDays}D`)
+  if (extraAmount) summaryParts.push(`₹${extraAmount} extra`)
+
+  return (
+    <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-10 h-10 rounded-full bg-black flex-shrink-0 flex items-center justify-center">
+          <span className="text-white text-sm font-bold uppercase">{customer.name?.charAt(0) ?? '?'}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-gray-900">{customer.name}</p>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-700">FLEXIBLE</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {summaryParts.length ? summaryParts.join(' · ') : 'No meals this month'}
+          </p>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <button onClick={onHistory} className="text-[11px] text-gray-400 hover:text-gray-600">History</button>
+        </div>
+      </div>
+
+      {/* Balance summary */}
+      <div className="bg-gray-50 rounded-xl px-3 py-3 mb-3">
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs text-gray-500">Total Bill</p>
+          <p className="text-sm font-bold text-gray-900">₹{total}</p>
+        </div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-gray-500">Total Paid</p>
+          <p className="text-sm font-semibold text-green-600">−₹{totalPaid}</p>
+        </div>
+        <div className="border-t border-gray-200 pt-2 flex items-center justify-between">
+          <p className="text-xs font-bold text-gray-700">Balance Due</p>
+          <p className={`text-sm font-bold ${balance > 0 ? 'text-red-500' : 'text-green-600'}`}>
+            {balance > 0 ? `₹${balance}` : 'Paid in full ✓'}
+          </p>
+        </div>
+      </div>
+
+      {/* Recent payments */}
+      {payments.length > 0 && (
+        <div className="mb-3">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Recent Payments</p>
+          <div className="space-y-1">
+            {payments.slice(0, 3).map(p => (
+              <div key={p.id} className="flex items-center justify-between text-xs">
+                <span className="text-gray-500">{p.date}{p.note ? ` · ${p.note}` : ''}</span>
+                <span className="font-semibold text-green-600">₹{p.amount}</span>
+              </div>
+            ))}
+            {payments.length > 3 && (
+              <button onClick={onHistory} className="text-xs text-gray-400 hover:text-gray-600 mt-0.5">
+                +{payments.length - 3} more — view history
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <button onClick={onAddPayment}
+        className="w-full flex items-center justify-center gap-1.5 bg-black text-white rounded-xl py-2.5 text-xs font-semibold hover:bg-gray-900 active:bg-gray-800 transition">
+        <PlusIcon /> Record Payment
+      </button>
     </div>
   )
 }
@@ -239,33 +631,53 @@ export default function OwnerBills() {
   const navigate = useNavigate()
   const now = new Date()
 
-  const [year, setYear] = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year, setYear]           = useState(now.getFullYear())
+  const [month, setMonth]         = useState(now.getMonth() + 1)
   const [showPicker, setShowPicker] = useState(false)
 
-  const [billRows, setBillRows] = useState([])   // [{ customer, billData, paid }]
-  const [loading, setLoading] = useState(true)
+  const [billRows, setBillRows]   = useState([])
+  const [loading, setLoading]     = useState(true)
 
-  // ── fetch + calculate ──────────────────────────────────────────────────────
+  const [confirmModal, setConfirmModal] = useState(null) // { title, message, confirmLabel?, onConfirm }
+  const [historySheet, setHistorySheet] = useState(null) // { customer, paymentType }
+  const [paymentModal, setPaymentModal] = useState(null) // { customer }
+
+  // undo: set of docIds with active 60s undo window
+  const [undoKeys, setUndoKeys]   = useState(new Set())
+  const undoTimers = useRef({})
+  const undoCallbacks = useRef({})
+
+  function startUndo(docId, onUndo) {
+    clearTimeout(undoTimers.current[docId])
+    undoCallbacks.current[docId] = onUndo
+    setUndoKeys(prev => new Set([...prev, docId]))
+    undoTimers.current[docId] = setTimeout(() => {
+      setUndoKeys(prev => { const s = new Set(prev); s.delete(docId); return s })
+      delete undoTimers.current[docId]
+      delete undoCallbacks.current[docId]
+    }, 60000)
+  }
+
+  function triggerUndo(docId) {
+    clearTimeout(undoTimers.current[docId])
+    setUndoKeys(prev => { const s = new Set(prev); s.delete(docId); return s })
+    const cb = undoCallbacks.current[docId]
+    delete undoTimers.current[docId]
+    delete undoCallbacks.current[docId]
+    if (cb) cb()
+  }
+
+  // ── fetch ──────────────────────────────────────────────────────────────────
   const fetchBills = useCallback(async () => {
     setLoading(true)
     try {
-      // customers
-      const cSnap = await getDocs(
-        query(collection(db, 'customers'), where('active', '==', true))
-      )
+      const cSnap = await getDocs(query(collection(db, 'customers'), where('active', '==', true)))
       const customers = cSnap.docs.map((d, i) => ({ id: d.id, invoiceIndex: i + 1, ...d.data() }))
 
-      // attendance for this month
       const { start, end } = getMonthBounds(year, month)
       const aSnap = await getDocs(
-        query(
-          collection(db, 'attendance'),
-          where('date', '>=', start),
-          where('date', '<=', end)
-        )
+        query(collection(db, 'attendance'), where('date', '>=', start), where('date', '<=', end))
       )
-      // group by customerId
       const aMap = {}
       aSnap.docs.forEach(d => {
         const data = d.data()
@@ -273,26 +685,56 @@ export default function OwnerBills() {
         aMap[data.customerId].push(data)
       })
 
-      // paid status from bills collection
-      const billDocIds = customers.map(c => `${c.id}_${year}-${String(month).padStart(2, '0')}`)
-      const paidSet = new Set()
-      await Promise.all(
-        billDocIds.map(async (docId, i) => {
-          const snap = await getDoc(doc(db, 'bills', docId))
-          if (snap.exists() && snap.data().paid) paidSet.add(customers[i].id)
-        })
-      )
+      const mk = mKey(year, month)
+      const weeks = getWeeks(year, month)
 
-      const rows = customers.map(customer => ({
-        customer,
-        billData: calcBill(customer, aMap[customer.id] ?? []),
-        paid: paidSet.has(customer.id),
+      const rows = await Promise.all(customers.map(async customer => {
+        const paymentType = customer.paymentType ?? 'monthly'
+        const customerDocs = aMap[customer.id] ?? []
+
+        if (paymentType === 'weekly') {
+          const weekData = await Promise.all(weeks.map(async week => {
+            const docId = `${customer.id}_${mk}_w${week.num}`
+            const snap = await getDoc(doc(db, 'bills', docId))
+            return {
+              ...week,
+              label: weekLabel(week, month),
+              billData: calcBill(customer, filterWeekDocs(customerDocs, week)),
+              paid: snap.exists() ? (snap.data().paid ?? false) : false,
+              docId,
+            }
+          }))
+          return { customer, paymentType, weeks: weekData }
+        }
+
+        if (paymentType === 'flexible') {
+          const billData = calcBill(customer, customerDocs)
+          const pSnap = await getDocs(
+            query(collection(db, 'payments'), where('customerId', '==', customer.id))
+          )
+          const payments = pSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => b.date.localeCompare(a.date))
+          return { customer, paymentType, billData, payments }
+        }
+
+        // monthly (default)
+        const docId = `${customer.id}_${mk}`
+        const snap = await getDoc(doc(db, 'bills', docId))
+        const billData = calcBill(customer, customerDocs)
+        return { customer, paymentType, billData, paid: snap.exists() ? (snap.data().paid ?? false) : false, docId }
       }))
 
-      // sort: unpaid first, then by total desc
       rows.sort((a, b) => {
-        if (a.paid !== b.paid) return a.paid ? 1 : -1
-        return b.billData.total - a.billData.total
+        const aTotal = a.paymentType === 'weekly' ? a.weeks.reduce((s, w) => s + w.billData.total, 0) : (a.billData?.total ?? 0)
+        const bTotal = b.paymentType === 'weekly' ? b.weeks.reduce((s, w) => s + w.billData.total, 0) : (b.billData?.total ?? 0)
+        const aUnpaid = a.paymentType === 'monthly' ? !a.paid && aTotal > 0
+          : a.paymentType === 'weekly' ? a.weeks.some(w => !w.paid && w.billData.total > 0)
+          : (aTotal - (a.payments?.reduce((s, p) => s + p.amount, 0) ?? 0)) > 0
+        const bUnpaid = b.paymentType === 'monthly' ? !b.paid && bTotal > 0
+          : b.paymentType === 'weekly' ? b.weeks.some(w => !w.paid && w.billData.total > 0)
+          : (bTotal - (b.payments?.reduce((s, p) => s + p.amount, 0) ?? 0)) > 0
+        if (aUnpaid !== bUnpaid) return aUnpaid ? -1 : 1
+        return bTotal - aTotal
       })
 
       setBillRows(rows)
@@ -303,53 +745,125 @@ export default function OwnerBills() {
 
   useEffect(() => { fetchBills() }, [fetchBills])
 
-  // ── totals ─────────────────────────────────────────────────────────────────
-  const grandTotal = billRows.reduce((s, r) => s + r.billData.total, 0)
-  const unpaidCount = billRows.filter(r => !r.paid && r.billData.total > 0).length
-  const daysInMonth = new Date(year, month, 0).getDate()
-  const daysDone = Math.min(todayDayOfMonth(), daysInMonth)
-
-  // ── mark paid ──────────────────────────────────────────────────────────────
-  async function handleMarkPaid(customer) {
-    const docId = `${customer.id}_${year}-${String(month).padStart(2, '0')}`
-    await setDoc(doc(db, 'bills', docId), {
-      customerId: customer.id,
-      year,
-      month,
-      paid: true,
-      paidAt: new Date().toISOString(),
+  // ── mark paid: monthly ────────────────────────────────────────────────────
+  function handleMarkPaidMonthly(row) {
+    setConfirmModal({
+      title: 'Confirm Payment',
+      message: `Mark ₹${row.billData.total} as paid for ${row.customer.name}?`,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        await setDoc(doc(db, 'bills', row.docId), {
+          customerId: row.customer.id, year, month, paid: true, paidAt: new Date().toISOString(),
+        })
+        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: true } : r))
+        startUndo(row.docId, async () => {
+          await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
+          setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
+        })
+      },
     })
-    setBillRows(prev => prev.map(r =>
-      r.customer.id === customer.id ? { ...r, paid: true } : r
-    ))
   }
 
-  // ── PDF ────────────────────────────────────────────────────────────────────
+  function handleForceUnpaidMonthly(row) {
+    setConfirmModal({
+      title: 'Mark as Unpaid?',
+      message: `Reverse payment for ${row.customer.name}?`,
+      confirmLabel: 'Yes, mark unpaid',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
+        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
+      },
+    })
+  }
+
+  // ── mark paid: weekly ─────────────────────────────────────────────────────
+  function handleMarkPaidWeek(customer, week) {
+    setConfirmModal({
+      title: 'Confirm Payment',
+      message: `Mark ₹${week.billData.total} as paid for ${customer.name} (${week.label})?`,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        await setDoc(doc(db, 'bills', week.docId), {
+          customerId: customer.id, year, month, weekNum: week.num, paid: true, paidAt: new Date().toISOString(),
+        })
+        setBillRows(prev => prev.map(r => {
+          if (r.customer.id !== customer.id) return r
+          return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: true } : w) }
+        }))
+        startUndo(week.docId, async () => {
+          await setDoc(doc(db, 'bills', week.docId), {
+            customerId: customer.id, year, month, weekNum: week.num, paid: false,
+          })
+          setBillRows(prev => prev.map(r => {
+            if (r.customer.id !== customer.id) return r
+            return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: false } : w) }
+          }))
+        })
+      },
+    })
+  }
+
+  function handleForceUnpaidWeek(customer, week) {
+    setConfirmModal({
+      title: 'Mark as Unpaid?',
+      message: `Reverse payment for ${customer.name} — ${week.label}?`,
+      confirmLabel: 'Yes, mark unpaid',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        await setDoc(doc(db, 'bills', week.docId), {
+          customerId: customer.id, year, month, weekNum: week.num, paid: false,
+        })
+        setBillRows(prev => prev.map(r => {
+          if (r.customer.id !== customer.id) return r
+          return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: false } : w) }
+        }))
+      },
+    })
+  }
+
+  // ── record payment: flexible ───────────────────────────────────────────────
+  async function handleAddPayment(customer, { amount, date, note }) {
+    await addDoc(collection(db, 'payments'), {
+      customerId: customer.id, amount, date, note, createdAt: new Date().toISOString(),
+    })
+    setPaymentModal(null)
+    await fetchBills()
+  }
+
+  // ── PDF / WhatsApp ─────────────────────────────────────────────────────────
   function handlePDF(customer, billData) {
     generateBillPDF(customer, billData, year, month)
   }
 
-  // ── WhatsApp ───────────────────────────────────────────────────────────────
   function handleWhatsApp(customer, billData) {
     generateBillPDF(customer, billData, year, month)
-    const monthName = MONTH_NAMES[month - 1]
     const text = encodeURIComponent(
-      `Dear ${customer.name},\nYour Home Made Food bill for ${monthName} ${year} is ₹${billData.total}.\nPlease find your bill attached. Thank you! 🙏`
+      `Dear ${customer.name},\nYour Home Made Food bill for ${MONTH_NAMES[month - 1]} ${year} is \u20b9${billData.total}.\nPlease find your bill attached. Thank you!`
     )
     const phone = (customer.phone ?? '').replace(/\D/g, '')
     window.open(`https://wa.me/91${phone}?text=${text}`, '_blank')
   }
 
-  // ── nav helpers ─────────────────────────────────────────────────────────────
-  function prevMonth() {
-    if (month === 1) { setYear(y => y - 1); setMonth(12) }
-    else setMonth(m => m - 1)
-  }
-  function nextMonth() {
-    if (month === 12) { setYear(y => y + 1); setMonth(1) }
-    else setMonth(m => m + 1)
-  }
+  // ── nav ────────────────────────────────────────────────────────────────────
+  function prevMonth() { if (month === 1) { setYear(y => y - 1); setMonth(12) } else setMonth(m => m - 1) }
+  function nextMonth() { if (month === 12) { setYear(y => y + 1); setMonth(1) } else setMonth(m => m + 1) }
 
+  // ── stats ──────────────────────────────────────────────────────────────────
+  const grandTotal = billRows.reduce((s, r) => {
+    if (r.paymentType === 'weekly') return s + r.weeks.reduce((ws, w) => ws + w.billData.total, 0)
+    return s + (r.billData?.total ?? 0)
+  }, 0)
+
+  const unpaidCount = billRows.filter(r => {
+    if (r.paymentType === 'monthly') return !r.paid && (r.billData?.total ?? 0) > 0
+    if (r.paymentType === 'weekly') return r.weeks.some(w => !w.paid && w.billData.total > 0)
+    const totalPaid = r.payments.reduce((s, p) => s + p.amount, 0)
+    return (r.billData?.total ?? 0) > totalPaid
+  }).length
+
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const daysDone = Math.min(now.getDate(), daysInMonth)
   const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`
 
   return (
@@ -363,20 +877,17 @@ export default function OwnerBills() {
               <span className="text-black text-xs font-bold tracking-widest">HMF</span>
             </div>
             <div>
-              <h1 className="text-white text-lg font-bold leading-tight m-0">Monthly Bills</h1>
+              <h1 className="text-white text-lg font-bold leading-tight m-0">Bills</h1>
               <p className="text-gray-400 text-xs mt-0.5">{monthLabel}</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowPicker(true)}
-            className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition"
-          >
+          <button onClick={() => setShowPicker(true)} className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition">
             <CalendarIcon />
           </button>
         </div>
       </header>
 
-      {/* ── Month summary card ── */}
+      {/* ── Summary card ── */}
       <div className="px-3 pt-3 flex-shrink-0">
         <div className="bg-black rounded-2xl px-5 py-4 text-white">
           <div className="flex items-start justify-between">
@@ -393,7 +904,7 @@ export default function OwnerBills() {
           </div>
           {unpaidCount > 0 && (
             <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between">
-              <p className="text-xs text-gray-400">{unpaidCount} pending payment{unpaidCount > 1 ? 's' : ''}</p>
+              <p className="text-xs text-gray-400">{unpaidCount} pending payment{unpaidCount !== 1 ? 's' : ''}</p>
               <span className="text-xs font-bold text-red-400 bg-red-400/10 px-2 py-0.5 rounded-full">
                 {unpaidCount} UNPAID
               </span>
@@ -429,17 +940,49 @@ export default function OwnerBills() {
             <p className="text-xs text-gray-400">Add customers to start tracking bills</p>
           </div>
         ) : (
-          billRows.map(({ customer, billData, paid }) => (
-            <BillCard
-              key={customer.id}
-              customer={customer}
-              billData={billData}
-              paid={paid}
-              onPDF={() => handlePDF(customer, billData)}
-              onWhatsApp={() => handleWhatsApp(customer, billData)}
-              onMarkPaid={() => handleMarkPaid(customer)}
-            />
-          ))
+          billRows.map(row => {
+            if (row.paymentType === 'weekly') {
+              return (
+                <WeeklyBillCard
+                  key={row.customer.id}
+                  customer={row.customer}
+                  weeks={row.weeks}
+                  undoKeys={undoKeys}
+                  onMarkPaid={(week) => handleMarkPaidWeek(row.customer, week)}
+                  onUndo={(week) => triggerUndo(week.docId)}
+                  onForceUnpaid={(week) => handleForceUnpaidWeek(row.customer, week)}
+                  onHistory={() => setHistorySheet({ customer: row.customer, paymentType: 'weekly' })}
+                />
+              )
+            }
+            if (row.paymentType === 'flexible') {
+              return (
+                <FlexibleBillCard
+                  key={row.customer.id}
+                  customer={row.customer}
+                  billData={row.billData}
+                  payments={row.payments}
+                  onAddPayment={() => setPaymentModal({ customer: row.customer })}
+                  onHistory={() => setHistorySheet({ customer: row.customer, paymentType: 'flexible' })}
+                />
+              )
+            }
+            return (
+              <MonthlyBillCard
+                key={row.customer.id}
+                customer={row.customer}
+                billData={row.billData}
+                paid={row.paid}
+                undoActive={undoKeys.has(row.docId)}
+                onMarkPaid={() => handleMarkPaidMonthly(row)}
+                onUndo={() => triggerUndo(row.docId)}
+                onForceUnpaid={() => handleForceUnpaidMonthly(row)}
+                onPDF={() => handlePDF(row.customer, row.billData)}
+                onWhatsApp={() => handleWhatsApp(row.customer, row.billData)}
+                onHistory={() => setHistorySheet({ customer: row.customer, paymentType: 'monthly' })}
+              />
+            )
+          })
         )}
       </main>
 
@@ -450,13 +993,33 @@ export default function OwnerBills() {
         <NavTab label="Bills" icon={<ReceiptIcon />} active onClick={() => {}} />
       </nav>
 
-      {/* ── Month picker ── */}
+      {/* ── Modals ── */}
       {showPicker && (
-        <MonthPicker
-          year={year}
-          month={month}
+        <MonthPicker year={year} month={month}
           onChange={(y, m) => { setYear(y); setMonth(m) }}
-          onClose={() => setShowPicker(false)}
+          onClose={() => setShowPicker(false)} />
+      )}
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmLabel={confirmModal.confirmLabel}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
+      {historySheet && (
+        <HistorySheet
+          customer={historySheet.customer}
+          paymentType={historySheet.paymentType}
+          onClose={() => setHistorySheet(null)}
+        />
+      )}
+      {paymentModal && (
+        <PaymentModal
+          customer={paymentModal.customer}
+          onSave={(data) => handleAddPayment(paymentModal.customer, data)}
+          onClose={() => setPaymentModal(null)}
         />
       )}
     </div>
@@ -465,16 +1028,13 @@ export default function OwnerBills() {
 
 function NavTab({ label, icon, active, onClick }) {
   return (
-    <button
-      onClick={onClick}
+    <button onClick={onClick}
       className={`flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-colors ${
         active ? 'text-black' : 'text-gray-400 hover:text-gray-600'
       }`}
     >
       {icon}
-      <span className={`text-[10px] font-semibold ${active ? 'text-black' : 'text-gray-400'}`}>
-        {label}
-      </span>
+      <span className={`text-[10px] font-semibold ${active ? 'text-black' : 'text-gray-400'}`}>{label}</span>
     </button>
   )
 }

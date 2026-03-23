@@ -80,6 +80,7 @@ const EMPTY_FORM = {
   email: '',
   lunchRate: '',
   dinnerRate: '',
+  paymentType: 'monthly',
 }
 
 function RatePill({ label, value }) {
@@ -200,6 +201,32 @@ function CustomerModal({ mode, initial, onSave, onClose }) {
                 />
               </div>
             </Field>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+              Payment Type
+            </label>
+            <div className="flex gap-2">
+              {[
+                { v: 'monthly',  l: 'Monthly'  },
+                { v: 'weekly',   l: 'Weekly'   },
+                { v: 'flexible', l: 'Flexible' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, paymentType: opt.v }))}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition ${
+                    (form.paymentType ?? 'monthly') === opt.v
+                      ? 'bg-black text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {opt.l}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Active toggle — only in edit mode */}
@@ -329,6 +356,7 @@ export default function OwnerCustomers() {
       email: form.email.trim(),
       lunchRate: Number(form.lunchRate),
       dinnerRate: Number(form.dinnerRate),
+      paymentType: form.paymentType ?? 'monthly',
       active: true,
       createdAt: new Date().toISOString(),
     })
@@ -353,6 +381,7 @@ export default function OwnerCustomers() {
       phone: form.phone.trim(),
       lunchRate: Number(form.lunchRate),
       dinnerRate: Number(form.dinnerRate),
+      paymentType: form.paymentType ?? 'monthly',
       active: form.active,
     })
     setModal(null)
@@ -472,6 +501,7 @@ export default function OwnerCustomers() {
             email: modal.customer.email ?? '',
             lunchRate: String(modal.customer.lunchRate ?? ''),
             dinnerRate: String(modal.customer.dinnerRate ?? ''),
+            paymentType: modal.customer.paymentType ?? 'monthly',
             active: modal.customer.active ?? true,
           }}
           onSave={handleEdit}
