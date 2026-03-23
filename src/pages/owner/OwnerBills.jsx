@@ -9,6 +9,7 @@ import {
   setDoc,
   getDoc,
   addDoc,
+  deleteDoc,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import {
@@ -264,25 +265,18 @@ function HistorySheet({ customer, paymentType, onClose }) {
     async function load() {
       setLoading(true)
       try {
-        if (paymentType === 'flexible') {
-          const snap = await getDocs(
-            query(collection(db, 'payments'), where('customerId', '==', customer.id))
-          )
-          const sorted = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-            .sort((a, b) => b.date.localeCompare(a.date))
-          setItems(sorted)
-        } else {
-          // monthly + weekly: query bills collection
-          const snap = await getDocs(
-            query(collection(db, 'bills'), where('customerId', '==', customer.id), where('paid', '==', true))
-          )
-          const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-          if (paymentType === 'weekly') {
-            setItems(all.filter(b => b.weekNum != null).sort((a, b) => b.paidAt > a.paidAt ? 1 : -1))
-          } else {
-            setItems(all.filter(b => b.weekNum == null).sort((a, b) => b.paidAt > a.paidAt ? 1 : -1))
-          }
-        }
+        // All history lives in the payments collection — query by customerId, filter by type in JS
+        const snap = await getDocs(
+          query(collection(db, 'payments'), where('customerId', '==', customer.id))
+        )
+        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        const typeKey = paymentType === 'flexible' ? 'flexible'
+          : paymentType === 'weekly' ? 'weekly' : 'monthly'
+        // backwards compat: old flexible records may not have a type field
+        const filtered = all
+          .filter(p => p.type === typeKey || (!p.type && typeKey === 'flexible'))
+          .sort((a, b) => (b.paidAt ?? b.createdAt ?? '').localeCompare(a.paidAt ?? a.createdAt ?? ''))
+        setItems(filtered)
       } finally {
         setLoading(false)
       }
@@ -335,35 +329,46 @@ function HistorySheet({ customer, paymentType, onClose }) {
             </div>
           ) : paymentType === 'weekly' ? (
             <div className="space-y-1">
-              {items.map(b => (
-                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-gray-50">
+              {items.map(p => (
+                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
                   <div>
                     <p className="text-sm font-semibold text-gray-900">
-                      {MONTH_NAMES[(b.month ?? 1) - 1]} {b.year} · Week {b.weekNum}
+                      {p.weekLabel ?? `Week ${p.weekNum} - ${MONTH_NAMES[(p.month ?? 1) - 1]} ${p.year}`}
                     </p>
+                    {p.startDate && p.endDate && (
+                      <p className="text-xs text-gray-400 mt-0.5">{p.startDate} – {p.endDate}</p>
+                    )}
                     <p className="text-xs text-gray-400 mt-0.5">
-                      {b.paidAt ? new Date(b.paidAt).toLocaleDateString('en-GB') : '—'}
+                      Paid {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-GB') : '—'} ✓
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md">PAID</span>
+                  <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
                 </div>
               ))}
+              <div className="pt-3 flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700">Total Paid</p>
+                <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
+              </div>
             </div>
           ) : (
             <div className="space-y-1">
-              {items.map(b => (
-                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-gray-50">
+              {items.map(p => (
+                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
                   <div>
                     <p className="text-sm font-semibold text-gray-900">
-                      {MONTH_NAMES[(b.month ?? 1) - 1]} {b.year}
+                      {MONTH_NAMES[(p.month ?? 1) - 1]} {p.year}
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      {b.paidAt ? new Date(b.paidAt).toLocaleDateString('en-GB') : '—'}
+                      Paid {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-GB') : '—'} ✓
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md">PAID</span>
+                  <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
                 </div>
               ))}
+              <div className="pt-3 flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700">Total Paid</p>
+                <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
+              </div>
             </div>
           )}
         </div>
@@ -713,7 +718,8 @@ export default function OwnerBills() {
             query(collection(db, 'payments'), where('customerId', '==', customer.id))
           )
           const payments = pSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-            .sort((a, b) => b.date.localeCompare(a.date))
+            .filter(p => p.type === 'flexible' || !p.type)
+            .sort((a, b) => (b.date ?? b.paidAt ?? '').localeCompare(a.date ?? a.paidAt ?? ''))
           return { customer, paymentType, billData, payments }
         }
 
@@ -752,11 +758,21 @@ export default function OwnerBills() {
       message: `Mark ₹${row.billData.total} as paid for ${row.customer.name}?`,
       onConfirm: async () => {
         setConfirmModal(null)
+        const paidAt = new Date().toISOString()
         await setDoc(doc(db, 'bills', row.docId), {
-          customerId: row.customer.id, year, month, paid: true, paidAt: new Date().toISOString(),
+          customerId: row.customer.id, year, month, paid: true, paidAt,
+        })
+        const payRef = await addDoc(collection(db, 'payments'), {
+          customerId: row.customer.id,
+          type: 'monthly',
+          amount: row.billData.total,
+          year,
+          month,
+          paidAt,
         })
         setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: true } : r))
         startUndo(row.docId, async () => {
+          await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
           setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
         })
@@ -764,13 +780,20 @@ export default function OwnerBills() {
     })
   }
 
-  function handleForceUnpaidMonthly(row) {
+  async function handleForceUnpaidMonthly(row) {
     setConfirmModal({
       title: 'Mark as Unpaid?',
       message: `Reverse payment for ${row.customer.name}?`,
       confirmLabel: 'Yes, mark unpaid',
       onConfirm: async () => {
         setConfirmModal(null)
+        // Find and delete matching payment records for this month
+        const pSnap = await getDocs(query(collection(db, 'payments'), where('customerId', '==', row.customer.id)))
+        const toDelete = pSnap.docs.filter(d => {
+          const p = d.data()
+          return p.type === 'monthly' && p.year === year && p.month === month
+        })
+        await Promise.all(toDelete.map(d => deleteDoc(doc(db, 'payments', d.id))))
         await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
         setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
       },
@@ -784,14 +807,31 @@ export default function OwnerBills() {
       message: `Mark ₹${week.billData.total} as paid for ${customer.name} (${week.label})?`,
       onConfirm: async () => {
         setConfirmModal(null)
+        const paidAt = new Date().toISOString()
+        const wLabel = `Week ${week.num} - ${MONTH_NAMES[month - 1].slice(0, 3)} ${year}`
+        const startDate = `${year}-${pad(month)}-${pad(week.start)}`
+        const endDate   = `${year}-${pad(month)}-${pad(week.end)}`
         await setDoc(doc(db, 'bills', week.docId), {
-          customerId: customer.id, year, month, weekNum: week.num, paid: true, paidAt: new Date().toISOString(),
+          customerId: customer.id, year, month, weekNum: week.num, paid: true, paidAt,
+        })
+        const payRef = await addDoc(collection(db, 'payments'), {
+          customerId: customer.id,
+          type: 'weekly',
+          weekNum: week.num,
+          weekLabel: wLabel,
+          startDate,
+          endDate,
+          amount: week.billData.total,
+          year,
+          month,
+          paidAt,
         })
         setBillRows(prev => prev.map(r => {
           if (r.customer.id !== customer.id) return r
           return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: true } : w) }
         }))
         startUndo(week.docId, async () => {
+          await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', week.docId), {
             customerId: customer.id, year, month, weekNum: week.num, paid: false,
           })
@@ -804,13 +844,20 @@ export default function OwnerBills() {
     })
   }
 
-  function handleForceUnpaidWeek(customer, week) {
+  async function handleForceUnpaidWeek(customer, week) {
     setConfirmModal({
       title: 'Mark as Unpaid?',
       message: `Reverse payment for ${customer.name} — ${week.label}?`,
       confirmLabel: 'Yes, mark unpaid',
       onConfirm: async () => {
         setConfirmModal(null)
+        // Find and delete matching payment records for this week
+        const pSnap = await getDocs(query(collection(db, 'payments'), where('customerId', '==', customer.id)))
+        const toDelete = pSnap.docs.filter(d => {
+          const p = d.data()
+          return p.type === 'weekly' && p.year === year && p.month === month && p.weekNum === week.num
+        })
+        await Promise.all(toDelete.map(d => deleteDoc(doc(db, 'payments', d.id))))
         await setDoc(doc(db, 'bills', week.docId), {
           customerId: customer.id, year, month, weekNum: week.num, paid: false,
         })
@@ -824,8 +871,15 @@ export default function OwnerBills() {
 
   // ── record payment: flexible ───────────────────────────────────────────────
   async function handleAddPayment(customer, { amount, date, note }) {
+    const paidAt = new Date().toISOString()
     await addDoc(collection(db, 'payments'), {
-      customerId: customer.id, amount, date, note, createdAt: new Date().toISOString(),
+      customerId: customer.id,
+      type: 'flexible',
+      amount,
+      date,
+      note,
+      paidAt,
+      createdAt: paidAt,
     })
     setPaymentModal(null)
     await fetchBills()
