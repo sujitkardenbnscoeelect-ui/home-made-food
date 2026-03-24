@@ -10,6 +10,7 @@ import {
   getDoc,
   addDoc,
   deleteDoc,
+  updateDoc,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import {
@@ -27,6 +28,18 @@ function mKey(year, month) { return `${year}-${pad(month)}` }
 function todayStr() {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function getTomorrowDate() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function formatBillingDate(dateStr) {
+  if (!dateStr) return null
+  const [y, m, day] = dateStr.split('-').map(Number)
+  return `${day} ${MONTH_NAMES[m - 1]} ${y}`
 }
 
 function getWeeks(year, month) {
@@ -415,6 +428,9 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
           <p className="text-xs text-gray-400 mt-0.5">
             {summaryParts.length ? summaryParts.join(' · ') : 'No meals this month'}
           </p>
+          {customer.billingStartDate && (
+            <p className="text-[10px] text-blue-500 mt-0.5">Billing from: {formatBillingDate(customer.billingStartDate)}</p>
+          )}
         </div>
         <div className="flex-shrink-0 text-right">
           <p className="text-base font-bold text-gray-900">₹{total}</p>
@@ -487,6 +503,9 @@ function WeeklyBillCard({ customer, weeks, undoKeys, onMarkPaid, onUndo, onForce
           <p className="text-xs text-gray-400 mt-0.5">
             {unpaidCount > 0 ? `${unpaidCount} week${unpaidCount !== 1 ? 's' : ''} unpaid` : 'All weeks paid'}
           </p>
+          {customer.billingStartDate && (
+            <p className="text-[10px] text-blue-500 mt-0.5">Billing from: {formatBillingDate(customer.billingStartDate)}</p>
+          )}
         </div>
         <div className="flex-shrink-0 text-right">
           <p className="text-base font-bold text-gray-900">₹{balanceDue}</p>
@@ -536,7 +555,7 @@ function WeeklyBillCard({ customer, weeks, undoKeys, onMarkPaid, onUndo, onForce
                       </p>
                     )}
                   </div>
-                  <p className="text-xs font-bold text-green-700">₹{week.billData.total}</p>
+                  <p className="text-xs font-bold text-green-700">₹{week.paidAmount ?? week.billData.total}</p>
                 </div>
               ))}
             </div>
@@ -626,6 +645,9 @@ function FlexibleBillCard({ customer, billData, payments, onAddPayment, onHistor
           <p className="text-xs text-gray-400 mt-0.5">
             {summaryParts.length ? summaryParts.join(' · ') : 'No meals this month'}
           </p>
+          {customer.billingStartDate && (
+            <p className="text-[10px] text-blue-500 mt-0.5">Billing from: {formatBillingDate(customer.billingStartDate)}</p>
+          )}
         </div>
         <div className="flex-shrink-0 text-right">
           <button onClick={onHistory} className="text-[11px] text-gray-400 hover:text-gray-600">History</button>
@@ -751,7 +773,10 @@ export default function OwnerBills() {
 
       const rows = await Promise.all(customers.map(async customer => {
         const paymentType = customer.paymentType ?? 'monthly'
-        const customerDocs = aMap[customer.id] ?? []
+        const billingStart = customer.billingStartDate ?? null
+        const customerDocs = (aMap[customer.id] ?? []).filter(rec =>
+          !billingStart || rec.date >= billingStart
+        )
 
         if (paymentType === 'weekly') {
           const weekData = await Promise.all(weeks.map(async week => {
@@ -764,6 +789,7 @@ export default function OwnerBills() {
               billData: calcBill(customer, filterWeekDocs(customerDocs, week)),
               paid: snapData.paid ?? false,
               paidAt: snapData.paidAt ?? null,
+              paidAmount: snapData.amount ?? null,
               docId,
             }
           }))
@@ -817,6 +843,7 @@ export default function OwnerBills() {
       onConfirm: async () => {
         setConfirmModal(null)
         const paidAt = new Date().toISOString()
+        const newBillingStart = getTomorrowDate()
         await setDoc(doc(db, 'bills', row.docId), {
           customerId: row.customer.id, year, month, paid: true, paidAt,
         })
@@ -828,11 +855,15 @@ export default function OwnerBills() {
           month,
           paidAt,
         })
-        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: true } : r))
+        await updateDoc(doc(db, 'customers', row.customer.id), { billingStartDate: newBillingStart })
+        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id
+          ? { ...r, paid: true, customer: { ...r.customer, billingStartDate: newBillingStart } }
+          : r))
         startUndo(row.docId, async () => {
           await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
-          setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
+          await updateDoc(doc(db, 'customers', row.customer.id), { billingStartDate: null })
+          await fetchBills()
         })
       },
     })
@@ -866,11 +897,13 @@ export default function OwnerBills() {
       onConfirm: async () => {
         setConfirmModal(null)
         const paidAt = new Date().toISOString()
+        const newBillingStart = getTomorrowDate()
         const wLabel = `Week ${week.num} - ${MONTH_NAMES[month - 1].slice(0, 3)} ${year}`
         const startDate = `${year}-${pad(month)}-${pad(week.start)}`
         const endDate   = `${year}-${pad(month)}-${pad(week.end)}`
         await setDoc(doc(db, 'bills', week.docId), {
           customerId: customer.id, year, month, weekNum: week.num, paid: true, paidAt,
+          amount: week.billData.total,
         })
         const payRef = await addDoc(collection(db, 'payments'), {
           customerId: customer.id,
@@ -884,19 +917,24 @@ export default function OwnerBills() {
           month,
           paidAt,
         })
+        await updateDoc(doc(db, 'customers', customer.id), { billingStartDate: newBillingStart })
         setBillRows(prev => prev.map(r => {
           if (r.customer.id !== customer.id) return r
-          return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: true } : w) }
+          return {
+            ...r,
+            customer: { ...r.customer, billingStartDate: newBillingStart },
+            weeks: r.weeks.map(w => w.num === week.num
+              ? { ...w, paid: true, paidAmount: week.billData.total }
+              : w),
+          }
         }))
         startUndo(week.docId, async () => {
           await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', week.docId), {
             customerId: customer.id, year, month, weekNum: week.num, paid: false,
           })
-          setBillRows(prev => prev.map(r => {
-            if (r.customer.id !== customer.id) return r
-            return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: false } : w) }
-          }))
+          await updateDoc(doc(db, 'customers', customer.id), { billingStartDate: null })
+          await fetchBills()
         })
       },
     })
