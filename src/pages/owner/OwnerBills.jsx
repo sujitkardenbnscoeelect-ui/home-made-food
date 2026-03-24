@@ -123,6 +123,15 @@ function PdfIcon() {
     </svg>
   )
 }
+function RefreshIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  )
+}
 function ChevronLeftIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
@@ -779,8 +788,14 @@ export default function OwnerBills() {
       const rows = await Promise.all(customers.map(async customer => {
         const paymentType = customer.paymentType ?? 'monthly'
         const billingStart = customer.billingStartDate ?? null
-        const customerDocs = (aMap[customer.id] ?? []).filter(rec =>
+        const allDocs = aMap[customer.id] ?? []
+        const customerDocs = allDocs.filter(rec =>
           !billingStart || rec.date >= billingStart
+        )
+        console.log(
+          `[Bills] ${customer.name} | billingStartDate: ${billingStart ?? 'none'}` +
+          ` | total records: ${allDocs.length} | filtered: ${customerDocs.length}` +
+          ` | dates: [${allDocs.map(r => r.date).join(', ')}]`
         )
 
         if (paymentType === 'weekly') {
@@ -816,6 +831,7 @@ export default function OwnerBills() {
         const docId = `${customer.id}_${mk}`
         const snap = await getDoc(doc(db, 'bills', docId))
         const billData = calcBill(customer, customerDocs)
+        console.log(`[Bills] ${customer.name} | calculated total: ₹${billData.total} (lunch:${billData.lunchDays} dinner:${billData.dinnerDays})`)
         return { customer, paymentType, billData, paid: snap.exists() ? (snap.data().paid ?? false) : false, docId }
       }))
 
@@ -1040,9 +1056,15 @@ export default function OwnerBills() {
               <p className="text-gray-400 text-xs mt-0.5">{monthLabel}</p>
             </div>
           </div>
-          <button onClick={() => setShowPicker(true)} className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition">
-            <CalendarIcon />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => fetchBills()} disabled={loading}
+              className="text-white p-2 rounded-xl active:bg-white/10 transition disabled:opacity-40">
+              <RefreshIcon />
+            </button>
+            <button onClick={() => setShowPicker(true)} className="text-white p-2 -mr-1 rounded-xl active:bg-white/10 transition">
+              <CalendarIcon />
+            </button>
+          </div>
         </div>
       </header>
 
