@@ -270,7 +270,19 @@ function PaymentModal({ customer, onSave, onClose }) {
 
 // ─── History Sheet ────────────────────────────────────────────────────────────
 
-function HistorySheet({ customer, paymentType, onClose }) {
+function fmtDate(dateStr) {
+  if (!dateStr) return '—'
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return `${d} ${MONTH_NAMES[m - 1]} ${y}`
+}
+
+function fmtDateShort(dateStr) {
+  if (!dateStr) return '—'
+  const [, m, d] = dateStr.split('-').map(Number)
+  return `${d} ${MONTH_NAMES[m - 1].slice(0, 3)}`
+}
+
+function HistorySheet({ customer, onClose }) {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
   const [fetchError, setFetchError] = useState(null)
@@ -280,61 +292,29 @@ function HistorySheet({ customer, paymentType, onClose }) {
       setLoading(true)
       setFetchError(null)
       try {
-        // normalize to string — Firestore doc IDs are always strings but legacy data may differ
-        const cid = String(customer.id)
-        console.log('History query customerId:', cid, 'type:', typeof cid, 'paymentType:', paymentType)
-
-        const typeKey = paymentType === 'flexible' ? 'flexible'
-          : paymentType === 'weekly' ? 'weekly' : 'monthly'
-
-        // ── payments collection (new format, saved from current code) ──
-        const paySnap = await getDocs(
-          query(collection(db, 'payments'), where('customerId', '==', cid))
+        console.log('Customer ID:', customer.id)
+        const q = query(
+          collection(db, 'payments'),
+          where('customerId', '==', customer.id)
         )
-        console.log('[HistorySheet] payments found:', paySnap.size, 'docs')
-        paySnap.docs.forEach(d => console.log('  payment doc:', d.id, d.data()))
-
-        const fromPayments = paySnap.docs.map(d => ({ id: d.id, _source: 'payments', ...d.data() }))
-          // include if type matches, OR no type field at all (legacy record — accept for any type)
-          .filter(p => p.type === typeKey || !p.type)
-
-        // ── bills collection (legacy format — monthly/weekly records saved before payments collection) ──
-        let fromBills = []
-        if (typeKey === 'monthly' || typeKey === 'weekly') {
-          const billsSnap = await getDocs(
-            query(collection(db, 'bills'), where('customerId', '==', cid))
-          )
-          console.log('[HistorySheet] bills found:', billsSnap.size, 'docs')
-          fromBills = billsSnap.docs
-            .map(d => ({ id: d.id, _source: 'bills', ...d.data() }))
-            .filter(b => b.paid === true)
-            // only include if there is no corresponding payments entry for same period
-            .filter(b => {
-              if (typeKey === 'monthly') {
-                return !fromPayments.some(p => p.year === b.year && p.month === b.month)
-              }
-              return !fromPayments.some(p => p.year === b.year && p.month === b.month && p.weekNum === b.weekNum)
-            })
-        }
-
-        const merged = [...fromPayments, ...fromBills]
-          .sort((a, b) => (b.paidAt ?? b.createdAt ?? '').localeCompare(a.paidAt ?? a.createdAt ?? ''))
-
-        console.log('[HistorySheet] total items after merge:', merged.length)
-        setItems(merged)
+        const snapshot = await getDocs(q)
+        console.log('Payments found:', snapshot.size)
+        const history = []
+        snapshot.forEach(d => { history.push({ id: d.id, ...d.data() }) })
+        // sort by paidOn date, newest first
+        history.sort((a, b) => (b.paidOn ?? b.paidAt ?? '').localeCompare(a.paidOn ?? a.paidAt ?? ''))
+        setItems(history)
       } catch (err) {
-        console.error('[HistorySheet] fetch error:', err)
+        console.error('History fetch error:', err)
         setFetchError(err.message ?? 'Failed to load history')
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [customer.id, paymentType])
+  }, [customer.id])
 
-  const totalPaid = paymentType === 'flexible'
-    ? items.reduce((s, p) => s + p.amount, 0)
-    : null
+  const grandTotal = items.reduce((s, p) => s + (p.amount ?? 0), 0)
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
@@ -361,83 +341,51 @@ function HistorySheet({ customer, paymentType, onClose }) {
             <p className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-3 text-center">{fetchError}</p>
           ) : items.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-8">No payment history yet</p>
-          ) : paymentType === 'flexible' ? (
-            <div className="space-y-1">
-              {items.map(p => (
-                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">₹{p.amount}</p>
-                    {p.note && <p className="text-xs text-gray-400 mt-0.5">{p.note}</p>}
-                  </div>
-                  <p className="text-xs text-gray-400">{p.date}</p>
-                </div>
-              ))}
-              <div className="pt-3 flex items-center justify-between">
-                <p className="text-sm font-semibold text-gray-700">Total Paid</p>
-                <p className="text-sm font-bold text-green-600">₹{totalPaid}</p>
-              </div>
-            </div>
-          ) : paymentType === 'weekly' ? (
-            <div className="space-y-1">
-              {items.map(p => {
-                const mealParts = [
-                  p.lunchDays > 0 && `${p.lunchDays} Lunch`,
-                  p.dinnerDays > 0 && `${p.dinnerDays} Dinner`,
-                  p.extraAmount > 0 && `₹${p.extraAmount} extra`,
-                ].filter(Boolean)
-                return (
-                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">
-                      {p.weekLabel ?? `Week ${p.weekNum} - ${MONTH_NAMES[(p.month ?? 1) - 1]} ${p.year}`}
-                    </p>
-                    {p.startDate && p.endDate && (
-                      <p className="text-xs text-gray-400 mt-0.5">{p.startDate} – {p.endDate}</p>
-                    )}
-                    {mealParts.length > 0 && (
-                      <p className="text-xs text-gray-500 mt-0.5">{mealParts.join(' · ')}</p>
-                    )}
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Paid on {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                    </p>
-                  </div>
-                  <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
-                </div>
-                )
-              })}
-              <div className="pt-3 flex items-center justify-between">
-                <p className="text-sm font-semibold text-gray-700">Total Paid</p>
-                <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
-              </div>
-            </div>
           ) : (
-            <div className="space-y-1">
-              {items.map(p => {
-                const mealParts = [
-                  p.lunchDays > 0 && `${p.lunchDays} Lunch`,
-                  p.dinnerDays > 0 && `${p.dinnerDays} Dinner`,
-                  p.extraAmount > 0 && `₹${p.extraAmount} extra`,
-                ].filter(Boolean)
+            <div>
+              {items.map((p, i) => {
+                // normalise field names — support both new schema and legacy field names
+                const paidOn      = p.paidOn ?? (p.paidAt ? p.paidAt.split('T')[0] : null)
+                const periodStart = p.periodStart ?? p.startDate ?? null
+                const periodEnd   = p.periodEnd   ?? p.endDate   ?? null
+                const lunchCount  = p.lunchCount  ?? p.lunchDays  ?? 0
+                const dinnerCount = p.dinnerCount ?? p.dinnerDays ?? 0
+                const extraCharges = p.extraCharges ?? p.extraAmount ?? 0
+                const note = p.note ?? null
+
                 return (
-                <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">
-                      {MONTH_NAMES[(p.month ?? 1) - 1]} {p.year}
-                    </p>
-                    {mealParts.length > 0 && (
-                      <p className="text-xs text-gray-500 mt-0.5">{mealParts.join(' · ')}</p>
+                  <div key={p.id} className={`py-3.5 ${i < items.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                    <div className="flex items-start justify-between">
+                      <p className="text-sm font-bold text-gray-900">
+                        Paid on {paidOn ? fmtDate(paidOn) : '—'}
+                      </p>
+                      <p className="text-sm font-bold text-green-600">₹{(p.amount ?? 0).toLocaleString('en-IN')}</p>
+                    </div>
+                    {(periodStart || periodEnd) && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Period: {fmtDateShort(periodStart)} – {fmtDateShort(periodEnd)}
+                      </p>
                     )}
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Paid on {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                    </p>
+                    {(lunchCount > 0 || dinnerCount > 0) && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {[
+                          lunchCount  > 0 && `Lunch: ${lunchCount} days`,
+                          dinnerCount > 0 && `Dinner: ${dinnerCount} days`,
+                        ].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                    {extraCharges > 0 && (
+                      <p className="text-xs text-gray-500 mt-0.5">Extra: ₹{extraCharges}</p>
+                    )}
+                    {note && (
+                      <p className="text-xs text-gray-400 mt-0.5">{note}</p>
+                    )}
                   </div>
-                  <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
-                </div>
                 )
               })}
-              <div className="pt-3 flex items-center justify-between">
+              <div className="pt-3 mt-1 border-t border-gray-200 flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-700">Total Paid</p>
-                <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
+                <p className="text-sm font-bold text-green-600">₹{grandTotal.toLocaleString('en-IN')}</p>
               </div>
             </div>
           )}
@@ -904,16 +852,19 @@ export default function OwnerBills() {
         await setDoc(doc(db, 'bills', row.docId), {
           customerId: row.customer.id, year, month, paid: true, paidAt,
         })
+        const paidOn = paidAt.split('T')[0]
+        const firstDayOfMonth = `${year}-${pad(month)}-01`
         const payRef = await addDoc(collection(db, 'payments'), {
-          customerId: row.customer.id,
-          type: 'monthly',
-          amount: row.billData.total,
-          lunchDays: row.billData.lunchDays ?? 0,
-          dinnerDays: row.billData.dinnerDays ?? 0,
-          extraAmount: row.billData.extraAmount ?? 0,
-          year,
-          month,
-          paidAt,
+          customerId:   row.customer.id,
+          customerName: row.customer.name,
+          amount:       row.billData.total,
+          paidOn,
+          periodStart:  row.customer.billingStartDate || firstDayOfMonth,
+          periodEnd:    paidOn,
+          lunchCount:   row.billData.lunchDays   ?? 0,
+          dinnerCount:  row.billData.dinnerDays  ?? 0,
+          extraCharges: row.billData.extraAmount ?? 0,
+          createdAt:    new Date(),
         })
         await updateDoc(doc(db, 'customers', row.customer.id), { billingStartDate: newBillingStart })
         // reload so new billing cycle (from billingStartDate) shows immediately
@@ -965,20 +916,20 @@ export default function OwnerBills() {
           customerId: customer.id, year, month, weekNum: week.num, paid: true, paidAt,
           amount: week.billData.total,
         })
+        const paidOn = paidAt.split('T')[0]
         const payRef = await addDoc(collection(db, 'payments'), {
-          customerId: customer.id,
-          type: 'weekly',
-          weekNum: week.num,
-          weekLabel: wLabel,
-          startDate,
-          endDate,
-          amount: week.billData.total,
-          lunchDays: week.billData.lunchDays ?? 0,
-          dinnerDays: week.billData.dinnerDays ?? 0,
-          extraAmount: week.billData.extraAmount ?? 0,
-          year,
-          month,
-          paidAt,
+          customerId:   customer.id,
+          customerName: customer.name,
+          amount:       week.billData.total,
+          paidOn,
+          periodStart:  customer.billingStartDate || startDate,
+          periodEnd:    endDate,
+          lunchCount:   week.billData.lunchDays   ?? 0,
+          dinnerCount:  week.billData.dinnerDays  ?? 0,
+          extraCharges: week.billData.extraAmount ?? 0,
+          weekNum:      week.num,
+          weekLabel:    wLabel,
+          createdAt:    new Date(),
         })
         await updateDoc(doc(db, 'customers', customer.id), { billingStartDate: newBillingStart })
         // reload so new billing cycle (from billingStartDate) shows immediately
@@ -1020,15 +971,20 @@ export default function OwnerBills() {
 
   // ── record payment: flexible ───────────────────────────────────────────────
   async function handleAddPayment(customer, { amount, date, note }) {
-    const paidAt = new Date().toISOString()
+    const now = new Date()
+    const firstDayOfMonth = `${year}-${pad(month)}-01`
     await addDoc(collection(db, 'payments'), {
-      customerId: customer.id,
-      type: 'flexible',
+      customerId:   customer.id,
+      customerName: customer.name,
       amount,
-      date,
-      note,
-      paidAt,
-      createdAt: paidAt,
+      paidOn:       date,
+      periodStart:  customer.billingStartDate || firstDayOfMonth,
+      periodEnd:    date,
+      lunchCount:   0,
+      dinnerCount:  0,
+      extraCharges: 0,
+      note:         note || null,
+      createdAt:    now,
     })
     setPaymentModal(null)
     await fetchBills()
