@@ -280,27 +280,31 @@ function HistorySheet({ customer, paymentType, onClose }) {
       setLoading(true)
       setFetchError(null)
       try {
-        console.log('[HistorySheet] Fetching for customerId:', customer.id, 'type:', paymentType)
+        // normalize to string — Firestore doc IDs are always strings but legacy data may differ
+        const cid = String(customer.id)
+        console.log('History query customerId:', cid, 'type:', typeof cid, 'paymentType:', paymentType)
 
         const typeKey = paymentType === 'flexible' ? 'flexible'
           : paymentType === 'weekly' ? 'weekly' : 'monthly'
 
         // ── payments collection (new format, saved from current code) ──
         const paySnap = await getDocs(
-          query(collection(db, 'payments'), where('customerId', '==', customer.id))
+          query(collection(db, 'payments'), where('customerId', '==', cid))
         )
-        console.log('[HistorySheet] payments collection docs found:', paySnap.size)
+        console.log('[HistorySheet] payments found:', paySnap.size, 'docs')
+        paySnap.docs.forEach(d => console.log('  payment doc:', d.id, d.data()))
 
         const fromPayments = paySnap.docs.map(d => ({ id: d.id, _source: 'payments', ...d.data() }))
-          .filter(p => p.type === typeKey || (!p.type && typeKey === 'flexible'))
+          // include if type matches, OR no type field at all (legacy record — accept for any type)
+          .filter(p => p.type === typeKey || !p.type)
 
         // ── bills collection (legacy format — monthly/weekly records saved before payments collection) ──
         let fromBills = []
         if (typeKey === 'monthly' || typeKey === 'weekly') {
           const billsSnap = await getDocs(
-            query(collection(db, 'bills'), where('customerId', '==', customer.id))
+            query(collection(db, 'bills'), where('customerId', '==', cid))
           )
-          console.log('[HistorySheet] bills collection docs found:', billsSnap.size)
+          console.log('[HistorySheet] bills found:', billsSnap.size, 'docs')
           fromBills = billsSnap.docs
             .map(d => ({ id: d.id, _source: 'bills', ...d.data() }))
             .filter(b => b.paid === true)
@@ -375,7 +379,13 @@ function HistorySheet({ customer, paymentType, onClose }) {
             </div>
           ) : paymentType === 'weekly' ? (
             <div className="space-y-1">
-              {items.map(p => (
+              {items.map(p => {
+                const mealParts = [
+                  p.lunchDays > 0 && `${p.lunchDays} Lunch`,
+                  p.dinnerDays > 0 && `${p.dinnerDays} Dinner`,
+                  p.extraAmount > 0 && `₹${p.extraAmount} extra`,
+                ].filter(Boolean)
+                return (
                 <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
                   <div>
                     <p className="text-sm font-semibold text-gray-900">
@@ -384,13 +394,17 @@ function HistorySheet({ customer, paymentType, onClose }) {
                     {p.startDate && p.endDate && (
                       <p className="text-xs text-gray-400 mt-0.5">{p.startDate} – {p.endDate}</p>
                     )}
+                    {mealParts.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-0.5">{mealParts.join(' · ')}</p>
+                    )}
                     <p className="text-xs text-gray-400 mt-0.5">
-                      Paid {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-GB') : '—'} ✓
+                      Paid on {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                     </p>
                   </div>
                   <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
                 </div>
-              ))}
+                )
+              })}
               <div className="pt-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-700">Total Paid</p>
                 <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
@@ -398,19 +412,29 @@ function HistorySheet({ customer, paymentType, onClose }) {
             </div>
           ) : (
             <div className="space-y-1">
-              {items.map(p => (
+              {items.map(p => {
+                const mealParts = [
+                  p.lunchDays > 0 && `${p.lunchDays} Lunch`,
+                  p.dinnerDays > 0 && `${p.dinnerDays} Dinner`,
+                  p.extraAmount > 0 && `₹${p.extraAmount} extra`,
+                ].filter(Boolean)
+                return (
                 <div key={p.id} className="flex items-start justify-between py-2.5 border-b border-gray-50">
                   <div>
                     <p className="text-sm font-semibold text-gray-900">
                       {MONTH_NAMES[(p.month ?? 1) - 1]} {p.year}
                     </p>
+                    {mealParts.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-0.5">{mealParts.join(' · ')}</p>
+                    )}
                     <p className="text-xs text-gray-400 mt-0.5">
-                      Paid {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-GB') : '—'} ✓
+                      Paid on {p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                     </p>
                   </div>
                   <p className="text-sm font-bold text-green-600">₹{p.amount ?? '—'}</p>
                 </div>
-              ))}
+                )
+              })}
               <div className="pt-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-700">Total Paid</p>
                 <p className="text-sm font-bold text-green-600">₹{items.reduce((s, p) => s + (p.amount ?? 0), 0)}</p>
@@ -482,7 +506,7 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
         <p className="text-[10px] text-gray-300 text-center mt-2">Hold to reverse payment</p>
       )}
 
-      {total > 0 && (
+      {(lunchDays > 0 || dinnerDays > 0) && total > 0 && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
           {!paid ? (
             <>
@@ -884,14 +908,16 @@ export default function OwnerBills() {
           customerId: row.customer.id,
           type: 'monthly',
           amount: row.billData.total,
+          lunchDays: row.billData.lunchDays ?? 0,
+          dinnerDays: row.billData.dinnerDays ?? 0,
+          extraAmount: row.billData.extraAmount ?? 0,
           year,
           month,
           paidAt,
         })
         await updateDoc(doc(db, 'customers', row.customer.id), { billingStartDate: newBillingStart })
-        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id
-          ? { ...r, paid: true, customer: { ...r.customer, billingStartDate: newBillingStart } }
-          : r))
+        // reload so new billing cycle (from billingStartDate) shows immediately
+        await fetchBills()
         startUndo(row.docId, async () => {
           await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
@@ -917,7 +943,8 @@ export default function OwnerBills() {
         })
         await Promise.all(toDelete.map(d => deleteDoc(doc(db, 'payments', d.id))))
         await setDoc(doc(db, 'bills', row.docId), { customerId: row.customer.id, year, month, paid: false })
-        setBillRows(prev => prev.map(r => r.customer.id === row.customer.id ? { ...r, paid: false } : r))
+        await updateDoc(doc(db, 'customers', row.customer.id), { billingStartDate: null })
+        await fetchBills()
       },
     })
   }
@@ -946,21 +973,16 @@ export default function OwnerBills() {
           startDate,
           endDate,
           amount: week.billData.total,
+          lunchDays: week.billData.lunchDays ?? 0,
+          dinnerDays: week.billData.dinnerDays ?? 0,
+          extraAmount: week.billData.extraAmount ?? 0,
           year,
           month,
           paidAt,
         })
         await updateDoc(doc(db, 'customers', customer.id), { billingStartDate: newBillingStart })
-        setBillRows(prev => prev.map(r => {
-          if (r.customer.id !== customer.id) return r
-          return {
-            ...r,
-            customer: { ...r.customer, billingStartDate: newBillingStart },
-            weeks: r.weeks.map(w => w.num === week.num
-              ? { ...w, paid: true, paidAmount: week.billData.total }
-              : w),
-          }
-        }))
+        // reload so new billing cycle (from billingStartDate) shows immediately
+        await fetchBills()
         startUndo(week.docId, async () => {
           await deleteDoc(doc(db, 'payments', payRef.id))
           await setDoc(doc(db, 'bills', week.docId), {
@@ -990,10 +1012,8 @@ export default function OwnerBills() {
         await setDoc(doc(db, 'bills', week.docId), {
           customerId: customer.id, year, month, weekNum: week.num, paid: false,
         })
-        setBillRows(prev => prev.map(r => {
-          if (r.customer.id !== customer.id) return r
-          return { ...r, weeks: r.weeks.map(w => w.num === week.num ? { ...w, paid: false } : w) }
-        }))
+        await updateDoc(doc(db, 'customers', customer.id), { billingStartDate: null })
+        await fetchBills()
       },
     })
   }
