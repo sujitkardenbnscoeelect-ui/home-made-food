@@ -273,23 +273,54 @@ function PaymentModal({ customer, onSave, onClose }) {
 function HistorySheet({ customer, paymentType, onClose }) {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
+  const [fetchError, setFetchError] = useState(null)
 
   useEffect(() => {
     async function load() {
       setLoading(true)
+      setFetchError(null)
       try {
-        // All history lives in the payments collection — query by customerId, filter by type in JS
-        const snap = await getDocs(
-          query(collection(db, 'payments'), where('customerId', '==', customer.id))
-        )
-        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        console.log('[HistorySheet] Fetching for customerId:', customer.id, 'type:', paymentType)
+
         const typeKey = paymentType === 'flexible' ? 'flexible'
           : paymentType === 'weekly' ? 'weekly' : 'monthly'
-        // backwards compat: old flexible records may not have a type field
-        const filtered = all
+
+        // ── payments collection (new format, saved from current code) ──
+        const paySnap = await getDocs(
+          query(collection(db, 'payments'), where('customerId', '==', customer.id))
+        )
+        console.log('[HistorySheet] payments collection docs found:', paySnap.size)
+
+        const fromPayments = paySnap.docs.map(d => ({ id: d.id, _source: 'payments', ...d.data() }))
           .filter(p => p.type === typeKey || (!p.type && typeKey === 'flexible'))
+
+        // ── bills collection (legacy format — monthly/weekly records saved before payments collection) ──
+        let fromBills = []
+        if (typeKey === 'monthly' || typeKey === 'weekly') {
+          const billsSnap = await getDocs(
+            query(collection(db, 'bills'), where('customerId', '==', customer.id))
+          )
+          console.log('[HistorySheet] bills collection docs found:', billsSnap.size)
+          fromBills = billsSnap.docs
+            .map(d => ({ id: d.id, _source: 'bills', ...d.data() }))
+            .filter(b => b.paid === true)
+            // only include if there is no corresponding payments entry for same period
+            .filter(b => {
+              if (typeKey === 'monthly') {
+                return !fromPayments.some(p => p.year === b.year && p.month === b.month)
+              }
+              return !fromPayments.some(p => p.year === b.year && p.month === b.month && p.weekNum === b.weekNum)
+            })
+        }
+
+        const merged = [...fromPayments, ...fromBills]
           .sort((a, b) => (b.paidAt ?? b.createdAt ?? '').localeCompare(a.paidAt ?? a.createdAt ?? ''))
-        setItems(filtered)
+
+        console.log('[HistorySheet] total items after merge:', merged.length)
+        setItems(merged)
+      } catch (err) {
+        console.error('[HistorySheet] fetch error:', err)
+        setFetchError(err.message ?? 'Failed to load history')
       } finally {
         setLoading(false)
       }
@@ -322,6 +353,8 @@ function HistorySheet({ customer, paymentType, onClose }) {
             <div className="flex justify-center py-8">
               <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
             </div>
+          ) : fetchError ? (
+            <p className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-3 text-center">{fetchError}</p>
           ) : items.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-8">No payment history yet</p>
           ) : paymentType === 'flexible' ? (
