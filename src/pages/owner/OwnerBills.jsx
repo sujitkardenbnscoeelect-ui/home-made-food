@@ -722,6 +722,64 @@ function FlexibleBillCard({ customer, billData, payments, onAddPayment, onHistor
   )
 }
 
+// ─── calculateCustomerBill ────────────────────────────────────────────────────
+
+async function calculateCustomerBill(customer) {
+  // Step 1: Get fresh customer data with billingStartDate
+  const customerDoc = await getDoc(doc(db, 'customers', customer.id))
+  const freshData = customerDoc.data() ?? {}
+  const freshCustomer = { ...customer, ...freshData }
+  const billingStartDate = freshCustomer.billingStartDate || null
+
+  console.log('=== BILL CALC ===')
+  console.log('Customer:', freshCustomer.name)
+  console.log('billingStartDate:', billingStartDate)
+
+  // Step 2: Fetch ALL attendance for this customer
+  const attSnap = await getDocs(
+    query(collection(db, 'attendance'), where('customerId', '==', customer.id))
+  )
+
+  console.log('Total attendance docs:', attSnap.size)
+
+  const allDocs = []
+  attSnap.forEach(d => {
+    const data = d.data()
+    console.log('Attendance record:', data.date, 'lunch:', data.lunch, 'dinner:', data.dinner)
+    allDocs.push(data)
+  })
+
+  // Step 3: Filter by billingStartDate only count if on or after billingStartDate
+  const relevantDocs = allDocs.filter(data => !billingStartDate || data.date >= billingStartDate)
+
+  let lunchCount = 0, dinnerCount = 0, extraTotal = 0
+  relevantDocs.forEach(data => {
+    if (data.lunch) lunchCount++
+    if (data.dinner) dinnerCount++
+    if (data.extraAmount) extraTotal += data.extraAmount
+  })
+
+  console.log('Filtered - Lunch:', lunchCount, 'Dinner:', dinnerCount, 'Extra:', extraTotal)
+
+  // Step 4: Calculate total
+  const total =
+    (lunchCount * (freshCustomer.lunchRate ?? 0)) +
+    (dinnerCount * (freshCustomer.dinnerRate ?? 0)) +
+    extraTotal
+
+  console.log('Final total:', total)
+
+  return {
+    lunchDays: lunchCount,
+    dinnerDays: dinnerCount,
+    extraAmount: extraTotal,
+    total,
+    billingStartDate,
+    attendanceRows: relevantDocs.sort((a, b) => a.date.localeCompare(b.date)),
+    freshCustomer,
+  }
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OwnerBills() {
@@ -771,68 +829,58 @@ export default function OwnerBills() {
       const cSnap = await getDocs(query(collection(db, 'customers'), where('active', '==', true)))
       const customers = cSnap.docs.map((d, i) => ({ id: d.id, invoiceIndex: i + 1, ...d.data() }))
 
-      const { start, end } = getMonthBounds(year, month)
-      const aSnap = await getDocs(
-        query(collection(db, 'attendance'), where('date', '>=', start), where('date', '<=', end))
-      )
-      const aMap = {}
-      aSnap.docs.forEach(d => {
-        const data = d.data()
-        if (!aMap[data.customerId]) aMap[data.customerId] = []
-        aMap[data.customerId].push(data)
-      })
-
       const mk = mKey(year, month)
       const weeks = getWeeks(year, month)
+      const weekPrefix = `${year}-${pad(month)}-`
 
       const rows = await Promise.all(customers.map(async customer => {
         const paymentType = customer.paymentType ?? 'monthly'
-        const billingStart = customer.billingStartDate ?? null
-        const allDocs = aMap[customer.id] ?? []
-        const customerDocs = allDocs.filter(rec =>
-          !billingStart || rec.date >= billingStart
-        )
-        console.log(
-          `[Bills] ${customer.name} | billingStartDate: ${billingStart ?? 'none'}` +
-          ` | total records: ${allDocs.length} | filtered: ${customerDocs.length}` +
-          ` | dates: [${allDocs.map(r => r.date).join(', ')}]`
-        )
+
+        // Fresh calculation: fetches latest billingStartDate + ALL attendance per customer
+        const { lunchDays, dinnerDays, extraAmount, total, billingStartDate, attendanceRows, freshCustomer } =
+          await calculateCustomerBill(customer)
+
+        const billData = { lunchDays, dinnerDays, extraAmount, total, attendanceRows }
+        const mergedCustomer = freshCustomer
 
         if (paymentType === 'weekly') {
           const weekData = await Promise.all(weeks.map(async week => {
             const docId = `${customer.id}_${mk}_w${week.num}`
             const snap = await getDoc(doc(db, 'bills', docId))
             const snapData = snap.exists() ? snap.data() : {}
+            // filter attendanceRows to this week in current month only
+            const weekDocs = attendanceRows.filter(d => {
+              if (!d.date.startsWith(weekPrefix)) return false
+              const day = parseInt(d.date.split('-')[2], 10)
+              return day >= week.start && day <= week.end
+            })
             return {
               ...week,
               label: weekLabel(week, month),
-              billData: calcBill(customer, filterWeekDocs(customerDocs, week)),
+              billData: calcBill(mergedCustomer, weekDocs),
               paid: snapData.paid ?? false,
               paidAt: snapData.paidAt ?? null,
               paidAmount: snapData.amount ?? null,
               docId,
             }
           }))
-          return { customer, paymentType, weeks: weekData }
+          return { customer: mergedCustomer, paymentType, weeks: weekData }
         }
 
         if (paymentType === 'flexible') {
-          const billData = calcBill(customer, customerDocs)
           const pSnap = await getDocs(
             query(collection(db, 'payments'), where('customerId', '==', customer.id))
           )
           const payments = pSnap.docs.map(d => ({ id: d.id, ...d.data() }))
             .filter(p => p.type === 'flexible' || !p.type)
             .sort((a, b) => (b.date ?? b.paidAt ?? '').localeCompare(a.date ?? a.paidAt ?? ''))
-          return { customer, paymentType, billData, payments }
+          return { customer: mergedCustomer, paymentType, billData, payments }
         }
 
         // monthly (default)
         const docId = `${customer.id}_${mk}`
         const snap = await getDoc(doc(db, 'bills', docId))
-        const billData = calcBill(customer, customerDocs)
-        console.log(`[Bills] ${customer.name} | calculated total: ₹${billData.total} (lunch:${billData.lunchDays} dinner:${billData.dinnerDays})`)
-        return { customer, paymentType, billData, paid: snap.exists() ? (snap.data().paid ?? false) : false, docId }
+        return { customer: mergedCustomer, paymentType, billData, paid: snap.exists() ? (snap.data().paid ?? false) : false, docId }
       }))
 
       rows.sort((a, b) => {
