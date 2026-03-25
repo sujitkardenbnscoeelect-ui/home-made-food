@@ -4,9 +4,11 @@ import {
   collection,
   getDocs,
   addDoc,
+  deleteDoc,
   doc,
   updateDoc,
   setDoc,
+  where,
   orderBy,
   query,
 } from 'firebase/firestore'
@@ -94,11 +96,13 @@ function RatePill({ label, value }) {
 
 // ─── Customer Form Modal ──────────────────────────────────────────────────────
 
-function CustomerModal({ mode, initial, onSave, onClose }) {
+function CustomerModal({ mode, initial, onSave, onDelete, onClose }) {
   const [form, setForm] = useState(initial ?? EMPTY_FORM)
   const [active, setActive] = useState(initial?.active ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   function set(field) {
     return (e) => setForm(f => ({ ...f, [field]: e.target.value }))
@@ -252,7 +256,7 @@ function CustomerModal({ mode, initial, onSave, onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="flex-shrink-0 px-5 pb-8 pt-3 border-t border-gray-100">
+        <div className="flex-shrink-0 px-5 pb-8 pt-3 border-t border-gray-100 space-y-3">
           <button
             onClick={handleSave}
             disabled={saving}
@@ -260,6 +264,49 @@ function CustomerModal({ mode, initial, onSave, onClose }) {
           >
             {saving ? (isEdit ? 'Saving…' : 'Creating account…') : (isEdit ? 'Save Changes' : 'Add Customer')}
           </button>
+
+          {isEdit && onDelete && (
+            <div className="border-t border-gray-100 pt-3">
+              {!deleteConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirm(true)}
+                  className="w-full bg-[#FF3B30] text-white rounded-xl py-3.5 text-sm font-semibold hover:bg-red-600 active:bg-red-700 transition"
+                >
+                  Delete Customer
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-gray-900 text-center">
+                    Delete {form.name}?
+                  </p>
+                  <p className="text-xs text-gray-400 text-center">
+                    This will remove all their data permanently.
+                  </p>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirm(false)}
+                      className="flex-1 bg-gray-100 text-gray-700 rounded-xl py-3 text-sm font-semibold hover:bg-gray-200 transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deleting}
+                      onClick={async () => {
+                        setDeleting(true)
+                        try { await onDelete() } finally { setDeleting(false) }
+                      }}
+                      className="flex-1 bg-[#FF3B30] text-white rounded-xl py-3 text-sm font-semibold hover:bg-red-600 active:bg-red-700 transition disabled:opacity-50"
+                    >
+                      {deleting ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -315,6 +362,7 @@ export default function OwnerCustomers() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null) // null | { mode: 'add' } | { mode: 'edit', customer }
+  const [toast, setToast] = useState('')
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true)
@@ -386,6 +434,20 @@ export default function OwnerCustomers() {
     })
     setModal(null)
     await fetchCustomers()
+  }
+
+  // ── delete customer ─────────────────────────────────────────────────────────
+  async function handleDelete() {
+    const { id } = modal.customer
+    await deleteDoc(doc(db, 'customers', id))
+    const usersSnap = await getDocs(query(collection(db, 'users'), where('customerId', '==', id)))
+    await Promise.all(usersSnap.docs.map(d => deleteDoc(doc(db, 'users', d.id))))
+    const paymentsSnap = await getDocs(query(collection(db, 'payments'), where('customerId', '==', id)))
+    await Promise.all(paymentsSnap.docs.map(d => deleteDoc(doc(db, 'payments', d.id))))
+    setModal(null)
+    setCustomers(prev => prev.filter(c => c.id !== id))
+    setToast('Customer deleted successfully')
+    setTimeout(() => setToast(''), 3000)
   }
 
   return (
@@ -505,8 +567,15 @@ export default function OwnerCustomers() {
             active: modal.customer.active ?? true,
           }}
           onSave={handleEdit}
+          onDelete={handleDelete}
           onClose={() => setModal(null)}
         />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm font-medium px-5 py-3 rounded-2xl shadow-lg whitespace-nowrap">
+          {toast}
+        </div>
       )}
     </div>
   )
