@@ -38,6 +38,18 @@ function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate()
 }
 
+function formatFullDate(dateStr) {
+  if (!dateStr) return '—'
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return `${d} ${MONTH_NAMES[m - 1]} ${y}`
+}
+
+function formatShortDate(dateStr) {
+  if (!dateStr) return '—'
+  const [, m, d] = dateStr.split('-').map(Number)
+  return `${d} ${MONTH_NAMES[m - 1].slice(0, 3)}`
+}
+
 // ─── icons ────────────────────────────────────────────────────────────────────
 
 function HomeIcon() {
@@ -152,9 +164,12 @@ export default function CustomerBill() {
   const [customer, setCustomer] = useState(null)
   const [billData, setBillData] = useState(null)
   const [paid, setPaid] = useState(false)
-  const [allDates, setAllDates] = useState([]) // full list of date strings for this month up to today
+  const [allDates, setAllDates] = useState([])
   const [attendanceMap, setAttendanceMap] = useState({})
   const [loading, setLoading] = useState(true)
+  const [payments, setPayments] = useState([])
+  const [billingStartDate, setBillingStartDate] = useState(null)
+  const [expandedPaymentId, setExpandedPaymentId] = useState(null)
 
   const fetchData = useCallback(async () => {
     if (!customerId) {
@@ -179,6 +194,9 @@ export default function CustomerBill() {
       console.log('customerId:', customerId)
       console.log('attendance records found:', aSnap.size)
 
+      const billingStart = cData.billingStartDate || null
+      setBillingStartDate(billingStart)
+
       const rows = []
       const aMap = {}
       aSnap.docs.forEach(d => {
@@ -190,16 +208,21 @@ export default function CustomerBill() {
       })
 
       setAttendanceMap(aMap)
-      setBillData(calcBill(cData, rows))
-
-      console.log('rows this month:', rows.length)
-      console.log('total calculated:', calcBill(cData, rows).total)
+      // Only count meals from billingStartDate onwards
+      const filteredRows = billingStart ? rows.filter(r => r.date >= billingStart) : rows
+      setBillData(calcBill(cData, filteredRows))
 
       // Paid status
       const billSnap = await getDoc(doc(db, 'bills', `${customerId}_${monthPrefix}`))
       setPaid(billSnap.exists() && billSnap.data().paid)
 
-      // All dates up to today (most recent first) for the day-wise list
+      // Fetch all payments for this customer, newest first
+      const pSnap = await getDocs(query(collection(db, 'payments'), where('customerId', '==', customerId)))
+      const allPayments = pSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.paidOn ?? b.date ?? '').localeCompare(a.paidOn ?? a.date ?? ''))
+      setPayments(allPayments)
+
+      // Dates from billingStartDate (or month start) up to today, newest first
       const todayDate = new Date()
       const capDay = (year === todayDate.getFullYear() && month === todayDate.getMonth() + 1)
         ? todayDate.getDate()
@@ -208,7 +231,8 @@ export default function CustomerBill() {
       for (let d = 1; d <= capDay; d++) {
         dates.push(`${monthPrefix}-${String(d).padStart(2, '0')}`)
       }
-      setAllDates(dates.reverse())
+      const filteredDates = billingStart ? dates.filter(d => d >= billingStart) : dates
+      setAllDates(filteredDates.reverse())
     } catch (err) {
       console.error('Failed to fetch bill data:', err)
     } finally {
@@ -264,14 +288,48 @@ export default function CustomerBill() {
           </div>
         ) : (
           <>
-            {/* ── Hero card ── */}
+            {/* ── Section 1: Last Payment ── */}
+            {payments.length > 0 && (() => {
+              const lp = payments[0]
+              const mealParts = [
+                lp.lunchCount > 0 && `${lp.lunchCount} Lunch`,
+                lp.dinnerCount > 0 && `${lp.dinnerCount} Dinner`,
+                lp.extraCharges > 0 && `₹${lp.extraCharges} extra`,
+              ].filter(Boolean)
+              return (
+                <div className="px-3 pt-3">
+                  <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-green-600 font-bold text-sm">✓ Last Payment Received</span>
+                    </div>
+                    <p className="text-xl font-bold text-green-700">
+                      ₹{(lp.amount ?? 0).toLocaleString('en-IN')} paid on {formatFullDate(lp.paidOn)}
+                    </p>
+                    {(lp.periodStart || mealParts.length > 0) && (
+                      <p className="text-xs text-green-600 mt-1">
+                        {lp.periodStart && lp.periodEnd
+                          ? `Period: ${formatShortDate(lp.periodStart)} – ${formatShortDate(lp.periodEnd)}`
+                          : ''}
+                        {mealParts.length > 0 && (lp.periodStart ? ' · ' : '') + mealParts.join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* ── Section 2: Current Bill ── */}
             <div className="px-3 pt-3">
               <div className="bg-black rounded-2xl px-5 py-6 text-white">
                 <p className="text-gray-400 text-xs font-medium uppercase tracking-wide">
-                  {monthName} {year} · Running Total
+                  Current Bill
                 </p>
+                {billingStartDate && (
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    Billing from: {formatFullDate(billingStartDate)}
+                  </p>
+                )}
 
-                {/* Big amount */}
                 <p
                   className="text-5xl font-semibold mt-2 leading-none"
                   style={{ fontFamily: "'Playfair Display', serif" }}
@@ -279,7 +337,6 @@ export default function CustomerBill() {
                   ₹{billData?.total.toLocaleString('en-IN') ?? '0'}
                 </p>
 
-                {/* Meal summary */}
                 <p className="text-gray-400 text-sm mt-3">
                   {[
                     billData?.lunchDays ? `${billData.lunchDays} Lunch` : '',
@@ -315,14 +372,69 @@ export default function CustomerBill() {
               </button>
             </div>
 
-            {/* ── Day-wise breakdown ── */}
+            {/* ── Section 3: Payment History ── */}
+            {payments.length > 0 && (
+              <div className="px-3 mt-4">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1 mb-2">
+                  Payment History
+                </p>
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                  {payments.map(p => {
+                    const isExpanded = expandedPaymentId === p.id
+                    const mealParts = [
+                      p.lunchCount > 0 && `${p.lunchCount} Lunch`,
+                      p.dinnerCount > 0 && `${p.dinnerCount} Dinner`,
+                      p.extraCharges > 0 && `₹${p.extraCharges} extra`,
+                    ].filter(Boolean)
+                    return (
+                      <div key={p.id} className="border-b border-gray-50 last:border-0">
+                        <button
+                          onClick={() => setExpandedPaymentId(isExpanded ? null : p.id)}
+                          className="w-full flex items-center justify-between px-4 py-3 text-left active:bg-gray-50 transition"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">
+                              {formatFullDate(p.paidOn)} · Paid ✓
+                            </p>
+                            {p.periodStart && p.periodEnd && (
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {formatShortDate(p.periodStart)} – {formatShortDate(p.periodEnd)}
+                              </p>
+                            )}
+                          </div>
+                          <p className="text-sm font-bold text-green-600 flex-shrink-0 ml-3">
+                            ₹{(p.amount ?? 0).toLocaleString('en-IN')}
+                          </p>
+                        </button>
+                        {isExpanded && mealParts.length > 0 && (
+                          <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                            {mealParts.map(part => (
+                              <span key={part} className="text-xs bg-gray-100 text-gray-600 rounded-full px-2.5 py-1 font-medium">
+                                {part}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Section 4: Day-wise breakdown ── */}
             <div className="px-3 mt-4">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1 mb-2">
                 Day-wise Breakdown
+                {billingStartDate && (
+                  <span className="ml-1 normal-case font-normal text-gray-400">
+                    (from {formatShortDate(billingStartDate)})
+                  </span>
+                )}
               </p>
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 {allDates.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-8">No days recorded yet this month</p>
+                  <p className="text-sm text-gray-400 text-center py-8">No meals recorded yet</p>
                 ) : (
                   allDates.map(dateStr => (
                     <DayRow
