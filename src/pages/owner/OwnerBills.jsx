@@ -401,13 +401,18 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
   const { lunchDays, dinnerDays, extraAmount, total } = billData
   const longPressTimer = useRef(null)
 
+  // When billingStartDate is set a new cycle has started.
+  // The stored paid=true was for the OLD period, not the current cycle.
+  // Treat the bill as unpaid UNLESS we are still inside the 60-second undo window.
+  const effectivePaid = paid && (!customer.billingStartDate || undoActive)
+
   const summaryParts = []
   if (lunchDays) summaryParts.push(`${lunchDays}L`)
   if (dinnerDays) summaryParts.push(`${dinnerDays}D`)
   if (extraAmount) summaryParts.push(`₹${extraAmount} extra`)
 
   function startLongPress() {
-    if (!paid) return
+    if (!effectivePaid) return
     longPressTimer.current = setTimeout(() => onForceUnpaid(), 600)
   }
   function cancelLongPress() { clearTimeout(longPressTimer.current) }
@@ -424,15 +429,17 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-gray-900 truncate">{customer.name}</p>
-            {paid && undoActive && (
+            {effectivePaid && undoActive && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 bg-green-100 text-green-700">PAID</span>
             )}
-            {!paid && total > 0 && (
+            {!effectivePaid && total > 0 && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 bg-red-100 text-red-600">UNPAID</span>
             )}
           </div>
           <p className="text-xs text-gray-400 mt-0.5">
-            {summaryParts.length ? summaryParts.join(' · ') : (total === 0 && !undoActive ? 'New billing cycle started' : 'No meals this month')}
+            {summaryParts.length
+              ? summaryParts.join(' · ')
+              : (total === 0 && !undoActive ? 'New billing cycle started' : 'No meals this month')}
           </p>
           {customer.billingStartDate && (
             <p className="text-[10px] text-blue-500 mt-0.5">Billing from: {formatBillingDate(customer.billingStartDate)}</p>
@@ -451,13 +458,13 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
         </div>
       )}
 
-      {paid && !undoActive && (
+      {effectivePaid && !undoActive && (
         <p className="text-[10px] text-gray-300 text-center mt-2">Hold to reverse payment</p>
       )}
 
       {(lunchDays > 0 || dinnerDays > 0) && total > 0 && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-          {!paid ? (
+          {!effectivePaid ? (
             <>
               <button onClick={onWhatsApp}
                 className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl py-2 text-xs font-semibold transition">
@@ -904,6 +911,13 @@ export default function OwnerBills() {
   }, [year, month])
 
   useEffect(() => { fetchBills() }, [fetchBills])
+
+  // Refresh bills when owner returns to this tab/window (e.g. after marking attendance)
+  useEffect(() => {
+    const handler = () => fetchBills()
+    window.addEventListener('focus', handler)
+    return () => window.removeEventListener('focus', handler)
+  }, [fetchBills])
 
   // ── mark paid: monthly ────────────────────────────────────────────────────
   function handleMarkPaidMonthly(row) {
