@@ -15,7 +15,6 @@ import {
 import { db } from '../../lib/firebase'
 import {
   MONTH_NAMES,
-  getMonthBounds,
   calcBill,
   generateBillPDF,
 } from '../../lib/generateBill'
@@ -30,9 +29,8 @@ function todayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-function getTomorrowDate() {
+function getTodayDate() {
   const d = new Date()
-  d.setDate(d.getDate() + 1)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
@@ -57,13 +55,6 @@ function getWeeks(year, month) {
 function weekLabel(week, month) {
   const m = MONTH_NAMES[month - 1].slice(0, 3)
   return `${m} ${week.start}–${week.end}`
-}
-
-function filterWeekDocs(allDocs, week) {
-  return allDocs.filter(d => {
-    const day = parseInt(d.date.split('-')[2], 10)
-    return day >= week.start && day <= week.end
-  })
 }
 
 // ─── icons ────────────────────────────────────────────────────────────────────
@@ -837,7 +828,7 @@ export default function OwnerBills() {
         const paymentType = customer.paymentType ?? 'monthly'
 
         // Fresh calculation: fetches latest billingStartDate + ALL attendance per customer
-        const { lunchDays, dinnerDays, extraAmount, total, billingStartDate, attendanceRows, freshCustomer } =
+        const { lunchDays, dinnerDays, extraAmount, total, attendanceRows, freshCustomer } =
           await calculateCustomerBill(customer)
 
         const billData = { lunchDays, dinnerDays, extraAmount, total, attendanceRows }
@@ -912,7 +903,7 @@ export default function OwnerBills() {
       onConfirm: async () => {
         setConfirmModal(null)
         const paidAt = new Date().toISOString()
-        const newBillingStart = getTomorrowDate()
+        const newBillingStart = getTodayDate()
         await setDoc(doc(db, 'bills', row.docId), {
           customerId: row.customer.id, year, month, paid: true, paidAt,
         })
@@ -972,7 +963,7 @@ export default function OwnerBills() {
       onConfirm: async () => {
         setConfirmModal(null)
         const paidAt = new Date().toISOString()
-        const newBillingStart = getTomorrowDate()
+        const newBillingStart = getTodayDate()
         const wLabel = `Week ${week.num} - ${MONTH_NAMES[month - 1].slice(0, 3)} ${year}`
         const startDate = `${year}-${pad(month)}-${pad(week.start)}`
         const endDate   = `${year}-${pad(month)}-${pad(week.end)}`
