@@ -424,14 +424,15 @@ function MonthlyBillCard({ customer, billData, paid, undoActive, onMarkPaid, onU
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-gray-900 truncate">{customer.name}</p>
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 ${
-              paid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-            }`}>
-              {paid ? 'PAID' : 'UNPAID'}
-            </span>
+            {paid && undoActive && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 bg-green-100 text-green-700">PAID</span>
+            )}
+            {!paid && total > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 bg-red-100 text-red-600">UNPAID</span>
+            )}
           </div>
           <p className="text-xs text-gray-400 mt-0.5">
-            {summaryParts.length ? summaryParts.join(' · ') : 'No meals this month'}
+            {summaryParts.length ? summaryParts.join(' · ') : (total === 0 && !undoActive ? 'New billing cycle started' : 'No meals this month')}
           </p>
           {customer.billingStartDate && (
             <p className="text-[10px] text-blue-500 mt-0.5">Billing from: {formatBillingDate(customer.billingStartDate)}</p>
@@ -783,6 +784,7 @@ export default function OwnerBills() {
 
   const [billRows, setBillRows]   = useState([])
   const [loading, setLoading]     = useState(true)
+  const [monthReceived, setMonthReceived] = useState(0)
 
   const [confirmModal, setConfirmModal] = useState(null) // { title, message, confirmLabel?, onConfirm }
   const [historySheet, setHistorySheet] = useState(null) // { customer, paymentType }
@@ -888,6 +890,14 @@ export default function OwnerBills() {
       })
 
       setBillRows(rows)
+
+      // Compute income received this month from payments collection
+      const monthPrefix = `${year}-${pad(month)}`
+      const allPaysSnap = await getDocs(collection(db, 'payments'))
+      const received = allPaysSnap.docs
+        .filter(d => (d.data().paidOn ?? '').startsWith(monthPrefix))
+        .reduce((s, d) => s + (d.data().amount ?? 0), 0)
+      setMonthReceived(received)
     } finally {
       setLoading(false)
     }
@@ -1112,9 +1122,9 @@ export default function OwnerBills() {
         <div className="bg-black rounded-2xl px-5 py-4 text-white">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wide">{monthLabel}</p>
-              <p className="text-3xl font-bold mt-1">₹{grandTotal.toLocaleString('en-IN')}</p>
-              <p className="text-gray-400 text-xs mt-1">Total billing amount</p>
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wide">{monthLabel} Income</p>
+              <p className="text-3xl font-bold mt-1">₹{monthReceived.toLocaleString('en-IN')}</p>
+              <p className="text-gray-400 text-xs mt-1">Received this month</p>
             </div>
             <div className="text-right">
               <p className="text-2xl font-bold">{billRows.length}</p>
@@ -1122,14 +1132,17 @@ export default function OwnerBills() {
               <p className="text-gray-300 text-xs mt-2 font-semibold">{daysDone}/{daysInMonth} days</p>
             </div>
           </div>
-          {unpaidCount > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between">
-              <p className="text-xs text-gray-400">{unpaidCount} pending payment{unpaidCount !== 1 ? 's' : ''}</p>
+          <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between">
+            <p className="text-xs text-gray-400">
+              Pending: ₹{grandTotal.toLocaleString('en-IN')}
+              {unpaidCount > 0 && ` · ${unpaidCount} customer${unpaidCount !== 1 ? 's' : ''}`}
+            </p>
+            {unpaidCount > 0 && (
               <span className="text-xs font-bold text-red-400 bg-red-400/10 px-2 py-0.5 rounded-full">
                 {unpaidCount} UNPAID
               </span>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
