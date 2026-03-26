@@ -417,23 +417,37 @@ export default function OwnerCustomers() {
       customerId: customerRef.id,
     })
 
+    // Optimistically add to list — no re-fetch, no loading flash
+    const newCustomer = {
+      id: customerRef.id,
+      name: form.name.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+      lunchRate: Number(form.lunchRate),
+      dinnerRate: Number(form.dinnerRate),
+      paymentType: form.paymentType ?? 'monthly',
+      active: true,
+    }
+    setCustomers(prev => [...prev, newCustomer].sort((a, b) => a.name.localeCompare(b.name)))
     setModal(null)
-    await fetchCustomers()
+    setToast('Customer added successfully')
+    setTimeout(() => setToast(''), 3000)
   }
 
   // ── edit customer ──────────────────────────────────────────────────────────
   async function handleEdit(form) {
     const { id } = modal.customer
-    await updateDoc(doc(db, 'customers', id), {
+    const updated = {
       name: form.name.trim(),
       phone: form.phone.trim(),
       lunchRate: Number(form.lunchRate),
       dinnerRate: Number(form.dinnerRate),
       paymentType: form.paymentType ?? 'monthly',
       active: form.active,
-    })
+    }
+    await updateDoc(doc(db, 'customers', id), updated)
+    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c))
     setModal(null)
-    await fetchCustomers()
   }
 
   // ── delete customer ─────────────────────────────────────────────────────────
