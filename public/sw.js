@@ -1,4 +1,4 @@
-const CACHE = 'hmf-v1'
+const CACHE = 'hmf-v2'
 
 // Assets to pre-cache on install (shell only — Firebase data is always live)
 const PRECACHE = ['/', '/index.html']
