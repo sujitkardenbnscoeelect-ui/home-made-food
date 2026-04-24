@@ -8,6 +8,10 @@ import App from './App.jsx'
 // Register service worker for PWA (production only)
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
+    // Unregister any old service workers first, then register fresh
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(reg => reg.unregister())
+    })
     navigator.serviceWorker.register('/sw.js').catch(err => {
       console.warn('SW registration failed:', err)
     })
