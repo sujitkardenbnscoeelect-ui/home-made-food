@@ -1,4 +1,4 @@
-const CACHE = 'hmf-v2'
+const CACHE = 'hmf-v3'
 
 // Assets to pre-cache on install (shell only — Firebase data is always live)
 const PRECACHE = ['/', '/index.html']
@@ -29,7 +29,9 @@ self.addEventListener('fetch', event => {
     url.hostname.includes('firebaseio.com') ||
     url.hostname.includes('googleapis.com') ||
     url.hostname.includes('firebaseapp.com') ||
-    url.hostname.includes('cloudfunctions.net')
+    url.hostname.includes('cloudfunctions.net') ||
+    url.hostname.includes('identitytoolkit') ||
+    url.hostname.includes('securetoken')
   ) {
     return
   }
